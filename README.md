@@ -34,6 +34,18 @@ python ste_infrasound.py audio/example.wav
 
 If you see an error about missing `simpleaudio`, ensure the virtual environment is activated and the requirements were installed.
 
+## Live FFT from USB input
+
+Capture from an input device (e.g., USB mic) and display a real-time spectrum:
+
+```bash
+python realtime_fft.py --device usb --sample-rate 48000 --fft-size 4096
+```
+
+- Omit `--device` to use the default input. The value is a case-insensitive substring of the device name.
+- Close the plot window to stop capture.
+- On macOS, install PortAudio if `sounddevice` cannot find it: `brew install portaudio`.
+
 ## Troubleshooting
 
 - **No sound:** Double-check your system volume and output device.
