@@ -229,9 +229,6 @@ def main(argv: list[str] | None = None) -> int:
     if not np.any(freq_mask):
         freq_mask[0] = True  # ensure at least DC bin is kept
     freqs = freqs_full[freq_mask]
-    # print freqs for debugging
-    for f in freqs:
-        print(f)
     if freqs.size == 1:
         freqs = np.concatenate([freqs, np.array([max_freq], dtype=np.float32)])  # pad for visibility
 
