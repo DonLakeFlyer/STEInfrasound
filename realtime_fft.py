@@ -11,6 +11,8 @@ import queue
 import sys
 from typing import Optional
 
+import matplotlib
+matplotlib.rcParams['toolbar'] = 'none'
 import matplotlib.pyplot as plt
 import numpy as np
 import sounddevice as sd
