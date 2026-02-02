@@ -5,8 +5,8 @@ import matplotlib.pyplot as plt
 # -----------------------------
 # CONFIGURATION
 # -----------------------------
-SAMPLE_RATES = [48000, 44100, 22050, 16000, 8000]  # Try in order of preference
-FFT_SIZE = 32768
+SAMPLE_RATES = [8000, 16000, 22050, 44100, 48000]  # Reversed order of preference
+FFT_SIZE = 16000
 LOW_HZ = 5  # Elephant rumbles start around 5 Hz
 HIGH_HZ = 25  # Elephant rumbles typically up to 24 Hz
 DB_MIN = 0  # Minimum dB for display
