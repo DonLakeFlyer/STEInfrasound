@@ -26,7 +26,7 @@ Create SD Card using Raspberry Pi Imager:
 sudo apt install samba samba-common-bin
 
 sudo nano /etc/samba/smb.conf
-[share]
+[home]
    path = /home/pi
    browseable = yes
    writeable = yes
@@ -37,6 +37,12 @@ sudo nano /etc/samba/smb.conf
 
 sudo smbpasswd -a pi
 sudo systemctl restart smbd
+
+### Startup service
+
+sudo mv /home/pi/repos/STEInfrasound/infrasound_display.service /etc/systemd/system
+sudo systemctl enable infrasound_display.service
+journalctl -u infrasound_display.service
 
 ## Prerequisites
 

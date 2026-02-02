@@ -1,0 +1,16 @@
+[Unit]
+Description=Infrasound Display Service
+After=graphical.target
+
+[Service]
+Type=simple
+User=pi
+Environment=DISPLAY=:0
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+WorkingDirectory=/home/pi/repos/STEInfrasound
+ExecStart=/home/pi/repos/STEInfrasound/start_infrasound.sh
+StandardOutput=append:/home/pi/startup.log
+StandardError=append:/home/pi/startup.log
+
+[Install]
+WantedBy=graphical.target
