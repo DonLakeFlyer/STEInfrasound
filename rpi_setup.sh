@@ -6,7 +6,7 @@ set -e
 echo "*** Install tools"
 sudo apt install build-essential git cmake -y
 sudo apt install samba samba-common-bin -y
-sudo apt install libasound2-dev -y
+sudo apt install libasound2-dev portaudio19-dev libportaudio2 libportaudiocpp0 libasound2-dev -y
 
 git config --global pull.rebase false
 
