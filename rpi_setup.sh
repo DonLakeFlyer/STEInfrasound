@@ -5,6 +5,9 @@ set -e
 
 echo "*** Install tools"
 sudo apt install build-essential git cmake -y
+sudo apt install samba samba-common-bin -y
+sudo apt install libasound2-dev -y
+
 git config --global pull.rebase false
 
 echo "*** Create repos directory"
@@ -14,7 +17,7 @@ if [ ! -d repos ]; then
 fi
 cd ~/repos
 
-echo "*** Clone STEInfrasound"
+echo "*** Clone/Update STEInfrasound"
 cd ~/repos
 if [ ! -d STEInfrasound ]; then
 	git clone --recursive https://github.com/DonLakeFlyer/STEInfrasound.git
