@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 # -----------------------------
 # CONFIGURATION
 # -----------------------------
-SAMPLE_RATE = 48000
+SAMPLE_RATES = [48000, 44100, 22050, 16000, 8000]  # Try in order of preference
 FFT_SIZE = 32768
 LOW_HZ = 5  # Elephant rumbles start around 5 Hz
 HIGH_HZ = 25  # Elephant rumbles typically up to 24 Hz
@@ -15,13 +15,28 @@ DB_MAX = 80  # Maximum dB for display
 # -----------------------------
 # SETUP AUDIO STREAM
 # -----------------------------
-stream = sd.InputStream(
-    samplerate=SAMPLE_RATE,
-    channels=1,
-    blocksize=FFT_SIZE,
-    dtype='float32'
-)
-stream.start()
+stream = None
+SAMPLE_RATE = None
+
+for rate in SAMPLE_RATES:
+    try:
+        stream = sd.InputStream(
+            samplerate=rate,
+            channels=1,
+            blocksize=FFT_SIZE,
+            dtype='float32'
+        )
+        stream.start()
+        SAMPLE_RATE = rate
+        print(f"Successfully opened audio stream at {rate} Hz")
+        break
+    except sd.PortAudioError as e:
+        print(f"Sample rate {rate} Hz failed: {e}")
+        continue
+
+if stream is None:
+    raise RuntimeError("Could not open audio stream with any supported sample rate")
+
 
 # -----------------------------
 # SETUP PLOT
