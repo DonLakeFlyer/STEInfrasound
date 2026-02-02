@@ -2,6 +2,23 @@
 
 A minimal Python utility that streams a WAV file to the system's default speakers using [`simpleaudio`](https://simpleaudio.readthedocs.io/).
 
+## Create SD Card Image
+
+Create SD Card using Raspberry Pi Imager:
+
+* Raspberry Pi 4 Model B — 4GB RAM
+* Debian Trixie
+* Set up initial WiFi
+* Turn on SSH with password authentification
+* Turn on Raspberry Pi Connect
+
+## Install software onto rPi
+
+* cd ~/Downloads
+* wget https://raw.githubusercontent.com/DonLakeFlyer/STEInfrasound/main/rpi_setup.sh
+* chmod +X rpi_setup.sh
+* ./rpi_setup.sh
+
 ## Prerequisites
 
 - Python 3.9 or newer (tested on macOS)
@@ -50,3 +67,24 @@ python realtime_fft.py --device usb --sample-rate 48000 --fft-size 4096
 
 - **No sound:** Double-check your system volume and output device.
 - **`ValueError: Only .wav files are supported`:** Convert your audio file to uncompressed PCM WAV format.
+
+### Find rPi over WiFi
+
+ping -c 1 raspberrypi.local
+
+### Raspberry Pi Connect
+
+Allows you to access rPi desktop from a web browser
+
+### Turn off removable media popup which shows when you plug in the LS-P5
+
+`nano ~/.config/pcmanfm/LXDE-pi/pcmanfm.conf`
+
+```
+[volume]
+mount_on_startup=0
+mount_removable=0
+autorun=0
+```
+
+`lxpanelctl restart`
