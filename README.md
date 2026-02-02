@@ -40,8 +40,10 @@ sudo systemctl restart smbd
 
 ### Startup service
 
-sudo mv /home/pi/repos/STEInfrasound/infrasound_display.service /etc/systemd/system
-sudo systemctl enable infrasound_display.service
+mkdir -p ~/.config/systemd/user
+sudo cp /home/pi/repos/STEInfrasound/infrasound_display.service ~/.config/systemd/user
+systemctl --user daemon-reload
+systemctl --user enable infrasound_display.service
 journalctl -u infrasound_display.service
 
 ## Prerequisites
