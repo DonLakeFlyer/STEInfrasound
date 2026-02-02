@@ -2,7 +2,9 @@
 
 A minimal Python utility that streams a WAV file to the system's default speakers using [`simpleaudio`](https://simpleaudio.readthedocs.io/).
 
-## Create SD Card Image
+## rPi Setup
+
+### Create SD Card Image
 
 Create SD Card using Raspberry Pi Imager:
 
@@ -12,12 +14,29 @@ Create SD Card using Raspberry Pi Imager:
 * Turn on SSH with password authentification
 * Turn on Raspberry Pi Connect
 
-## Install software onto rPi
+### Install software onto rPi
 
 * cd ~/Downloads
 * wget https://raw.githubusercontent.com/DonLakeFlyer/STEInfrasound/main/rpi_setup.sh
 * chmod +X rpi_setup.sh
 * ./rpi_setup.sh
+
+### Setup SMB
+
+sudo apt install samba samba-common-bin
+
+sudo nano /etc/samba/smb.conf
+[share]
+   path = /home/pi
+   browseable = yes
+   writeable = yes
+   only guest = no
+   create mask = 0775
+   directory mask = 0775
+   public = yes
+
+sudo smbpasswd -a pi
+sudo systemctl restart smbd
 
 ## Prerequisites
 
