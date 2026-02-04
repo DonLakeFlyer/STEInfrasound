@@ -406,6 +406,124 @@ ax.grid(True, alpha=0.3)
 ax.tick_params(labelsize=6)
 
 # -----------------------------
+# MENU DIALOG
+# -----------------------------
+menu_dialog = None
+menu_buttons = []
+
+def show_menu_dialog():
+    """Show menu dialog with power options."""
+    global menu_dialog, menu_buttons
+    from matplotlib.widgets import Button
+
+    if menu_dialog is not None:
+        return  # Already showing
+
+    log("Showing menu dialog...")
+    menu_dialog = plt.figure(figsize=(SCREEN_WIDTH, SCREEN_HEIGHT), dpi=SCREEN_DPI)
+    menu_dialog.patch.set_facecolor('#1a1a1a')
+    ax_menu = menu_dialog.add_subplot(111)
+    ax_menu.set_xlim(0, 1)
+    ax_menu.set_ylim(0, 1)
+    ax_menu.axis('off')
+
+    # Title
+    ax_menu.text(0.5, 0.7, 'Menu',
+                 ha='center', va='center', fontsize=16, color='cyan', weight='bold')
+
+    menu_buttons = []
+
+    if IS_RPI:
+        # Reboot button
+        ax_reboot = plt.axes([0.25, 0.45, 0.5, 0.12])
+        btn_reboot = Button(ax_reboot, 'Reboot', color='#ff6b6b', hovercolor='#ff5252')
+
+        def reboot(event):
+            log("User selected Reboot")
+            plt.close('all')
+            subprocess.run(['sudo', 'reboot'], check=False)
+
+        btn_reboot.on_clicked(reboot)
+        btn_reboot.label.set_fontsize(10)
+        menu_buttons.append(btn_reboot)
+
+        # Shutdown button
+        ax_shutdown = plt.axes([0.25, 0.3, 0.5, 0.12])
+        btn_shutdown = Button(ax_shutdown, 'Shutdown', color='#6b6bff', hovercolor='#5252ff')
+
+        def shutdown(event):
+            log("User selected Shutdown")
+            plt.close('all')
+            subprocess.run(['sudo', 'shutdown', '-h', 'now'], check=False)
+
+        btn_shutdown.on_clicked(shutdown)
+        btn_shutdown.label.set_fontsize(10)
+        menu_buttons.append(btn_shutdown)
+    else:
+        # Exit button for desktop
+        ax_exit = plt.axes([0.25, 0.45, 0.5, 0.12])
+        btn_exit = Button(ax_exit, 'Exit', color='#ff6b6b', hovercolor='#ff5252')
+
+        def exit_program(event):
+            log("User selected Exit")
+            plt.close('all')
+            sys.exit(0)
+
+        btn_exit.on_clicked(exit_program)
+        btn_exit.label.set_fontsize(10)
+        menu_buttons.append(btn_exit)
+
+    # Cancel button (for both platforms)
+    ax_cancel = plt.axes([0.25, 0.15, 0.5, 0.12])
+    btn_cancel = Button(ax_cancel, 'Cancel', color='#4a4a4a', hovercolor='#5a5a5a')
+
+    def cancel(event):
+        global menu_dialog, menu_buttons
+        log("User cancelled menu")
+        if menu_dialog is not None:
+            plt.close(menu_dialog)
+            menu_dialog = None
+            menu_buttons = []
+
+    btn_cancel.on_clicked(cancel)
+    btn_cancel.label.set_fontsize(10)
+    menu_buttons.append(btn_cancel)
+
+    # Maximize window
+    try:
+        mng = plt.get_current_fig_manager()
+        if IS_RPI:
+            try:
+                mng.window.attributes('-fullscreen', True)
+            except:
+                try:
+                    mng.full_screen_toggle()
+                except:
+                    pass
+        else:
+            try:
+                mng.window.state('zoomed')
+            except:
+                try:
+                    mng.full_screen_toggle()
+                except:
+                    pass
+    except Exception as e:
+        log(f"Error maximizing menu window: {e}")
+
+    plt.tight_layout()
+    plt.show(block=False)
+    plt.draw()
+
+def on_click(event):
+    """Handle click events on the chart."""
+    if event.inaxes == ax:
+        show_menu_dialog()
+
+# Connect click handler
+fig.canvas.mpl_connect('button_press_event', on_click)
+
+# -----------------------------
 # UPDATE FUNCTION
 # -----------------------------
 def update_plot(frame):
