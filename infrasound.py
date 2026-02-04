@@ -2,6 +2,15 @@ import numpy as np
 import sounddevice as sd
 import matplotlib
 matplotlib.rcParams['toolbar'] = 'none'
+# Set backend explicitly for headless/service operation
+if os.environ.get('DISPLAY'):
+    try:
+        matplotlib.use('TkAgg')
+    except:
+        try:
+            matplotlib.use('Qt5Agg')
+        except:
+            pass
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import time
@@ -107,6 +116,11 @@ def show_splash_screen():
     fig_splash = None
     ax_splash = None
 
+    # Give X server extra time to be ready when running as service
+    if IS_RPI and os.environ.get('DISPLAY'):
+        log("Waiting for display to be ready...")
+        time.sleep(2)
+
     try:
         log("Creating splash screen...")
         fig_splash = plt.figure(figsize=(SCREEN_WIDTH, SCREEN_HEIGHT), dpi=SCREEN_DPI)
@@ -161,6 +175,7 @@ def show_splash_screen():
     except Exception as e:
         log(f"ERROR creating splash screen: {e}")
         traceback.print_exc()
+        # Continue anyway - audio connection is more important
 
     # Try to connect to audio device during countdown
     for i in range(10, 0, -1):
@@ -272,10 +287,10 @@ def show_error_screen(error_message):
             ax_error.text(0.5, 0.28, 'Close to exit',
                       ha='center', va='center', fontsize=6, color='gray', style='italic')
 
-        # Add buttons for Raspberry Pi only - larger for touchscreen
-        if IS_RPI:
-            from matplotlib.widgets import Button
+        # Add buttons
+        from matplotlib.widgets import Button
 
+        if IS_RPI:
             # Reboot button - larger and positioned for small screen
             ax_reboot = plt.axes([0.1, 0.08, 0.35, 0.24])
             btn_reboot = Button(ax_reboot, 'Reboot', color='#ff6b6b', hovercolor='#ff5252')
@@ -299,6 +314,18 @@ def show_error_screen(error_message):
 
             btn_shutdown.on_clicked(shutdown)
             btn_shutdown.label.set_fontsize(9)
+        else:
+            # Exit button for non-RPi platforms
+            ax_exit = plt.axes([0.325, 0.08, 0.35, 0.24])
+            btn_exit = Button(ax_exit, 'Exit', color='#ff6b6b', hovercolor='#ff5252')
+
+            def exit_program(event):
+                print("Exiting program...")
+                plt.close('all')
+                sys.exit(1)
+
+            btn_exit.on_clicked(exit_program)
+            btn_exit.label.set_fontsize(9)
 
         # Maximize window - platform specific
         mng = plt.get_current_fig_manager()
