@@ -1,5 +1,12 @@
 import numpy as np
 import sounddevice as sd
+import time
+import platform
+import os
+import subprocess
+import sys
+import traceback
+import signal
 import matplotlib
 matplotlib.rcParams['toolbar'] = 'none'
 # Set backend explicitly for headless/service operation
@@ -13,13 +20,6 @@ if os.environ.get('DISPLAY'):
             pass
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
-import time
-import platform
-import os
-import subprocess
-import sys
-import traceback
-import signal
 
 # Add logging to help debug
 def log(msg):
