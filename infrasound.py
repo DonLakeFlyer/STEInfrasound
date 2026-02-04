@@ -428,14 +428,14 @@ def show_menu_dialog():
     ax_menu.axis('off')
 
     # Title
-    ax_menu.text(0.5, 0.7, 'Menu',
+    ax_menu.text(0.5, 0.75, 'Menu',
                  ha='center', va='center', fontsize=16, color='cyan', weight='bold')
 
     menu_buttons = []
 
     if IS_RPI:
         # Reboot button
-        ax_reboot = plt.axes([0.25, 0.45, 0.5, 0.12])
+        ax_reboot = plt.axes([0.2, 0.5, 0.6, 0.1])
         btn_reboot = Button(ax_reboot, 'Reboot', color='#ff6b6b', hovercolor='#ff5252')
 
         def reboot(event):
@@ -448,7 +448,7 @@ def show_menu_dialog():
         menu_buttons.append(btn_reboot)
 
         # Shutdown button
-        ax_shutdown = plt.axes([0.25, 0.3, 0.5, 0.12])
+        ax_shutdown = plt.axes([0.2, 0.35, 0.6, 0.1])
         btn_shutdown = Button(ax_shutdown, 'Shutdown', color='#6b6bff', hovercolor='#5252ff')
 
         def shutdown(event):
@@ -461,7 +461,7 @@ def show_menu_dialog():
         menu_buttons.append(btn_shutdown)
     else:
         # Exit button for desktop
-        ax_exit = plt.axes([0.25, 0.45, 0.5, 0.12])
+        ax_exit = plt.axes([0.2, 0.5, 0.6, 0.1])
         btn_exit = Button(ax_exit, 'Exit', color='#ff6b6b', hovercolor='#ff5252')
 
         def exit_program(event):
@@ -474,7 +474,7 @@ def show_menu_dialog():
         menu_buttons.append(btn_exit)
 
     # Cancel button (for both platforms)
-    ax_cancel = plt.axes([0.25, 0.15, 0.5, 0.12])
+    ax_cancel = plt.axes([0.2, 0.2, 0.6, 0.1])
     btn_cancel = Button(ax_cancel, 'Cancel', color='#4a4a4a', hovercolor='#5a5a5a')
 
     def cancel(event):
