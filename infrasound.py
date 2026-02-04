@@ -4,6 +4,36 @@ import matplotlib
 matplotlib.rcParams['toolbar'] = 'none'
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
+import time
+import platform
+import os
+import subprocess
+
+# -----------------------------
+# PLATFORM DETECTION
+# -----------------------------
+def is_raspberry_pi():
+    """Detect if running on Raspberry Pi."""
+    try:
+        # Check for Raspberry Pi specific hardware
+        if os.path.exists('/proc/device-tree/model'):
+            with open('/proc/device-tree/model', 'r') as f:
+                model = f.read()
+                if 'Raspberry Pi' in model:
+                    return True
+        # Alternative check using platform
+        if platform.machine() in ['armv7l', 'aarch64'] and platform.system() == 'Linux':
+            return True
+    except:
+        pass
+    return False
+
+IS_RPI = is_raspberry_pi()
+
+if IS_RPI:
+    print("Running on Raspberry Pi")
+else:
+    print("Running on desktop/other platform")
 
 # -----------------------------
 # CONFIGURATION
@@ -36,6 +66,11 @@ audio_buffer = np.zeros(BUFFER_SIZE, dtype='float32')
 # Peak hold buffer - will be initialized after infra_freqs is defined
 peak_values = None
 
+# Audio stream - will be set if successful
+stream = None
+audio_error = None
+audio_connected = False
+
 # -----------------------------
 # AUDIO CALLBACK
 # -----------------------------
@@ -51,24 +86,182 @@ def audio_callback(indata, frames, time_info, status):
     audio_buffer[-len(data):] = data
 
 # -----------------------------
-# SETUP AUDIO STREAM
+# SPLASH SCREEN
 # -----------------------------
-try:
-    stream = sd.InputStream(
-        samplerate=SAMPLE_RATE,
-        channels=1,
-        callback=audio_callback,
-        blocksize=int(SAMPLE_RATE / UPDATE_RATE),  # Process enough samples for update rate
-        dtype='float32'
-    )
-    stream.start()
-    print(f"Audio stream started at {SAMPLE_RATE} Hz")
-    print(f"FFT size: {FFT_SIZE} samples ({FFT_SIZE/SAMPLE_RATE:.1f} seconds)")
-    print(f"Frequency resolution: {FREQ_RESOLUTION} Hz")
-    print(f"Update rate: {UPDATE_RATE} Hz")
-except Exception as e:
-    print(f"Error opening audio stream: {e}")
-    raise
+def show_splash_screen():
+    """Show a full-screen splash screen and attempt audio connection."""
+    global stream, audio_error, audio_connected
+
+    fig_splash = plt.figure(figsize=(12, 8))
+    fig_splash.patch.set_facecolor('#1a1a1a')
+    ax_splash = fig_splash.add_subplot(111)
+    ax_splash.set_xlim(0, 1)
+    ax_splash.set_ylim(0, 1)
+    ax_splash.axis('off')
+
+    # Main message
+    ax_splash.text(0.5, 0.55, 'Infrasound Spectrum Monitor',
+                   ha='center', va='center', fontsize=32, color='cyan', weight='bold')
+    ax_splash.text(0.5, 0.45, 'Connecting to audio device...',
+                   ha='center', va='center', fontsize=18, color='white')
+    ax_splash.text(0.5, 0.38, 'Please wait',
+                   ha='center', va='center', fontsize=14, color='gray')
+
+    # Maximize window - platform specific
+    mng = plt.get_current_fig_manager()
+    if IS_RPI:
+        # Raspberry Pi fullscreen
+        try:
+            mng.full_screen_toggle()
+        except:
+            try:
+                mng.window.attributes('-fullscreen', True)
+            except:
+                pass
+    else:
+        # Desktop maximize
+        try:
+            mng.window.state('zoomed')  # Windows
+        except:
+            try:
+                mng.full_screen_toggle()  # Some backends
+            except:
+                pass
+
+    plt.tight_layout()
+    plt.show(block=False)
+    plt.draw()
+    plt.pause(0.1)
+
+    # Try to connect to audio device during countdown
+    for i in range(10, 0, -1):
+        if not audio_connected:
+            ax_splash.texts[2].set_text(f'Connecting... ({i} second{"s" if i > 1 else ""} remaining)')
+            plt.draw()
+
+            # Attempt connection
+            try:
+                stream = sd.InputStream(
+                    samplerate=SAMPLE_RATE,
+                    channels=1,
+                    callback=audio_callback,
+                    blocksize=int(SAMPLE_RATE / UPDATE_RATE),
+                    dtype='float32'
+                )
+                stream.start()
+                audio_connected = True
+                print(f"Audio stream started at {SAMPLE_RATE} Hz")
+                print(f"FFT size: {FFT_SIZE} samples ({FFT_SIZE/SAMPLE_RATE:.1f} seconds)")
+                print(f"Frequency resolution: {FREQ_RESOLUTION} Hz")
+                print(f"Update rate: {UPDATE_RATE} Hz")
+
+                # Show success message briefly
+                ax_splash.texts[1].set_text('Audio device connected!')
+                ax_splash.texts[1].set_color('lime')
+                ax_splash.texts[2].set_text('Starting visualization...')
+                plt.draw()
+                plt.pause(1)
+                break
+            except Exception as e:
+                audio_error = str(e)
+                # Keep trying for remaining time
+                plt.pause(1)
+        else:
+            break
+
+    plt.close(fig_splash)
+
+    # Return connection status
+    return audio_connected
+
+def show_error_screen(error_message):
+    """Show a full-screen error window."""
+    fig_error = plt.figure(figsize=(12, 8))
+    fig_error.patch.set_facecolor('#1a1a1a')
+    ax_error = fig_error.add_subplot(111)
+    ax_error.set_xlim(0, 1)
+    ax_error.set_ylim(0, 1)
+    ax_error.axis('off')
+
+    # Error message
+    ax_error.text(0.5, 0.6, '⚠ Audio Device Error',
+                  ha='center', va='center', fontsize=32, color='red', weight='bold')
+    ax_error.text(0.5, 0.5, 'Failed to connect to audio device',
+                  ha='center', va='center', fontsize=18, color='white')
+    ax_error.text(0.5, 0.42, f'Error: {error_message}',
+                  ha='center', va='center', fontsize=12, color='orange', style='italic')
+    ax_error.text(0.5, 0.3, 'Please check:',
+                  ha='center', va='center', fontsize=14, color='gray')
+    ax_error.text(0.5, 0.25, '• Check that OM Systems LS-P5 is turned on',
+                  ha='center', va='center', fontsize=12, color='lightgray')
+    ax_error.text(0.5, 0.21, '• Check the LS-P5 is connected to rPi',
+                  ha='center', va='center', fontsize=12, color='lightgray')
+    ax_error.text(0.5, 0.17, '• Check that batteries are good',
+                  ha='center', va='center', fontsize=12, color='lightgray')
+
+    if IS_RPI:
+        ax_error.text(0.5, 0.05, 'Use buttons below or close window to exit',
+                      ha='center', va='center', fontsize=10, color='gray', style='italic')
+    else:
+        ax_error.text(0.5, 0.05, 'Close this window to exit',
+                      ha='center', va='center', fontsize=10, color='gray', style='italic')
+
+    # Add buttons for Raspberry Pi only
+    if IS_RPI:
+        from matplotlib.widgets import Button
+
+        # Reboot button
+        ax_reboot = plt.axes([0.35, 0.1, 0.12, 0.05])
+        btn_reboot = Button(ax_reboot, 'Reboot', color='#ff6b6b', hovercolor='#ff5252')
+
+        def reboot(event):
+            print("Rebooting Raspberry Pi...")
+            plt.close('all')
+            subprocess.run(['sudo', 'reboot'], check=False)
+
+        btn_reboot.on_clicked(reboot)
+
+        # Shutdown button
+        ax_shutdown = plt.axes([0.53, 0.1, 0.12, 0.05])
+        btn_shutdown = Button(ax_shutdown, 'Shutdown', color='#6b6bff', hovercolor='#5252ff')
+
+        def shutdown(event):
+            print("Shutting down Raspberry Pi...")
+            plt.close('all')
+            subprocess.run(['sudo', 'shutdown', '-h', 'now'], check=False)
+
+        btn_shutdown.on_clicked(shutdown)
+
+    # Maximize window - platform specific
+    mng = plt.get_current_fig_manager()
+    if IS_RPI:
+        # Raspberry Pi fullscreen
+        try:
+            mng.full_screen_toggle()
+        except:
+            try:
+                mng.window.attributes('-fullscreen', True)
+            except:
+                pass
+    else:
+        # Desktop maximize
+        try:
+            mng.window.state('zoomed')  # Windows
+        except:
+            try:
+                mng.full_screen_toggle()  # Some backends
+            except:
+                pass
+
+    plt.tight_layout()
+    plt.show()
+
+# Show splash screen and attempt audio connection
+if not show_splash_screen():
+    # Connection failed after timeout
+    print(f"Error opening audio stream: {audio_error}")
+    show_error_screen(audio_error if audio_error else "Connection timeout")
+    exit(1)
 
 # -----------------------------
 # SETUP PLOT
@@ -143,5 +336,6 @@ plt.tight_layout()
 plt.show()
 
 # Clean up
-stream.stop()
-stream.close()
+if stream is not None:
+    stream.stop()
+    stream.close()
