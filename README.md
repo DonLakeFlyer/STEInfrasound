@@ -38,6 +38,28 @@ sudo nano /etc/samba/smb.conf
 sudo smbpasswd -a pi
 sudo systemctl restart smbd
 
+### Setup Journaling
+
+sudo mkdir -p /var/log/journal
+sudo mkdir -p /var/log/journal/$(cat /etc/machine-id)
+sudo chown root:systemd-journal /var/log/journal
+sudo chmod 2755 /var/log/journal
+sudo setfacl -R -nm g:systemd-journal:rx /var/log/journal
+sudo setfacl -R -nm g:adm:rx /var/log/journal
+sudo setfacl -R -nm u:pi:rx /var/log/journal
+
+sudo mkdir -p /etc/systemd/journald.conf.d
+sudo nano /etc/systemd/journald.conf.d/override.conf
+
+[Journal]
+Storage=persistent
+
+sudo rm -rf /var/log/journal
+sudo systemd-tmpfiles --create
+
+reboot
+systemctl status systemd-journald
+
 ### Startup service
 
 mkdir -p ~/.config/systemd/user
