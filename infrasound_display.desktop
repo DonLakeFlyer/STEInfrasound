@@ -2,7 +2,9 @@
 Type=Application
 Name=Infrasound Display
 Comment=Infrasound Monitor Application
-Exec=/home/pi/repos/STEInfrasound/start_infrasound.sh
+Exec=bash /home/pi/repos/STEInfrasound/start_infrasound.sh
 Path=/home/pi/repos/STEInfrasound
 Terminal=false
 X-GNOME-Autostart-enabled=true
+Hidden=false
+NoDisplay=false

@@ -65,13 +65,31 @@ systemctl status systemd-journald
 Use autostart for GUI applications:
 
 ```bash
+# Make sure start script is executable
+chmod +x /home/pi/repos/STEInfrasound/start_infrasound.sh
+
+# Copy desktop file to autostart
 mkdir -p ~/.config/autostart
 cp /home/pi/repos/STEInfrasound/infrasound_display.desktop ~/.config/autostart/
+chmod +x ~/.config/autostart/infrasound_display.desktop
 ```
 
 To check if it will run on next boot:
 ```bash
 ls -la ~/.config/autostart/
+cat ~/.config/autostart/infrasound_display.desktop
+```
+
+Test the desktop file manually (before reboot):
+```bash
+gtk-launch infrasound_display.desktop
+# Or
+/home/pi/repos/STEInfrasound/start_infrasound.sh
+```
+
+Check the startup log after reboot:
+```bash
+cat /home/pi/infrasound_startup.log
 ```
 
 To remove the old systemd user service (if you had it installed):
