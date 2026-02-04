@@ -60,6 +60,11 @@ DB_MAX = 100
 # Peak decay settings
 DECAY_RATE = 0.90  # Multiplier per update (0.90 = 10% decay per update)
 
+# Screen size settings for 3.5" 320x480 display
+SCREEN_DPI = 100
+SCREEN_WIDTH = 4.8  # inches (480 pixels / 100 dpi)
+SCREEN_HEIGHT = 3.2  # inches (320 pixels / 100 dpi)
+
 # Rolling buffer - always keep the last FFT_SIZE samples
 audio_buffer = np.zeros(BUFFER_SIZE, dtype='float32')
 
@@ -92,20 +97,20 @@ def show_splash_screen():
     """Show a full-screen splash screen and attempt audio connection."""
     global stream, audio_error, audio_connected
 
-    fig_splash = plt.figure(figsize=(12, 8))
+    fig_splash = plt.figure(figsize=(SCREEN_WIDTH, SCREEN_HEIGHT), dpi=SCREEN_DPI)
     fig_splash.patch.set_facecolor('#1a1a1a')
     ax_splash = fig_splash.add_subplot(111)
     ax_splash.set_xlim(0, 1)
     ax_splash.set_ylim(0, 1)
     ax_splash.axis('off')
 
-    # Main message
-    ax_splash.text(0.5, 0.55, 'Infrasound Spectrum Monitor',
-                   ha='center', va='center', fontsize=32, color='cyan', weight='bold')
-    ax_splash.text(0.5, 0.45, 'Connecting to audio device...',
-                   ha='center', va='center', fontsize=18, color='white')
-    ax_splash.text(0.5, 0.38, 'Please wait',
-                   ha='center', va='center', fontsize=14, color='gray')
+    # Main message - smaller fonts for small screen
+    ax_splash.text(0.5, 0.6, 'Infrasound Monitor',
+                   ha='center', va='center', fontsize=14, color='cyan', weight='bold')
+    ax_splash.text(0.5, 0.5, 'Connecting...',
+                   ha='center', va='center', fontsize=10, color='white')
+    ax_splash.text(0.5, 0.42, 'Please wait',
+                   ha='center', va='center', fontsize=8, color='gray')
 
     # Maximize window - platform specific
     mng = plt.get_current_fig_manager()
@@ -136,7 +141,7 @@ def show_splash_screen():
     # Try to connect to audio device during countdown
     for i in range(10, 0, -1):
         if not audio_connected:
-            ax_splash.texts[2].set_text(f'Connecting... ({i} second{"s" if i > 1 else ""} remaining)')
+            ax_splash.texts[2].set_text(f'{i}s...')
             plt.draw()
 
             # Attempt connection
@@ -156,9 +161,9 @@ def show_splash_screen():
                 print(f"Update rate: {UPDATE_RATE} Hz")
 
                 # Show success message briefly
-                ax_splash.texts[1].set_text('Audio device connected!')
+                ax_splash.texts[1].set_text('Connected!')
                 ax_splash.texts[1].set_color('lime')
-                ax_splash.texts[2].set_text('Starting visualization...')
+                ax_splash.texts[2].set_text('Starting...')
                 plt.draw()
                 plt.pause(1)
                 break
@@ -176,42 +181,46 @@ def show_splash_screen():
 
 def show_error_screen(error_message):
     """Show a full-screen error window."""
-    fig_error = plt.figure(figsize=(12, 8))
+    fig_error = plt.figure(figsize=(SCREEN_WIDTH, SCREEN_HEIGHT), dpi=SCREEN_DPI)
     fig_error.patch.set_facecolor('#1a1a1a')
     ax_error = fig_error.add_subplot(111)
     ax_error.set_xlim(0, 1)
     ax_error.set_ylim(0, 1)
     ax_error.axis('off')
 
-    # Error message
-    ax_error.text(0.5, 0.6, '⚠ Audio Device Error',
-                  ha='center', va='center', fontsize=32, color='red', weight='bold')
-    ax_error.text(0.5, 0.5, 'Failed to connect to audio device',
-                  ha='center', va='center', fontsize=18, color='white')
-    ax_error.text(0.5, 0.42, f'Error: {error_message}',
-                  ha='center', va='center', fontsize=12, color='orange', style='italic')
-    ax_error.text(0.5, 0.3, 'Please check:',
-                  ha='center', va='center', fontsize=14, color='gray')
-    ax_error.text(0.5, 0.25, '• Check that OM Systems LS-P5 is turned on',
-                  ha='center', va='center', fontsize=12, color='lightgray')
-    ax_error.text(0.5, 0.21, '• Check the LS-P5 is connected to rPi',
-                  ha='center', va='center', fontsize=12, color='lightgray')
-    ax_error.text(0.5, 0.17, '• Check that batteries are good',
-                  ha='center', va='center', fontsize=12, color='lightgray')
+    # Error message - smaller fonts for small screen
+    ax_error.text(0.5, 0.75, '⚠ Audio Error',
+                  ha='center', va='center', fontsize=14, color='red', weight='bold')
+    ax_error.text(0.5, 0.68, 'Cannot connect',
+                  ha='center', va='center', fontsize=9, color='white')
+
+    # Truncate long error messages
+    short_error = error_message[:40] + '...' if len(error_message) > 40 else error_message
+    ax_error.text(0.5, 0.62, short_error,
+                  ha='center', va='center', fontsize=6, color='orange', style='italic')
+
+    ax_error.text(0.5, 0.53, 'Check:',
+                  ha='center', va='center', fontsize=8, color='gray')
+    ax_error.text(0.5, 0.48, '• LS-P5 is ON',
+                  ha='center', va='center', fontsize=7, color='lightgray')
+    ax_error.text(0.5, 0.43, '• LS-P5 connected',
+                  ha='center', va='center', fontsize=7, color='lightgray')
+    ax_error.text(0.5, 0.38, '• Batteries good',
+                  ha='center', va='center', fontsize=7, color='lightgray')
 
     if IS_RPI:
-        ax_error.text(0.5, 0.05, 'Use buttons below or close window to exit',
-                      ha='center', va='center', fontsize=10, color='gray', style='italic')
+        ax_error.text(0.5, 0.28, 'Use buttons or close',
+                      ha='center', va='center', fontsize=6, color='gray', style='italic')
     else:
-        ax_error.text(0.5, 0.05, 'Close this window to exit',
-                      ha='center', va='center', fontsize=10, color='gray', style='italic')
+        ax_error.text(0.5, 0.28, 'Close to exit',
+                      ha='center', va='center', fontsize=6, color='gray', style='italic')
 
-    # Add buttons for Raspberry Pi only
+    # Add buttons for Raspberry Pi only - larger for touchscreen
     if IS_RPI:
         from matplotlib.widgets import Button
 
-        # Reboot button
-        ax_reboot = plt.axes([0.35, 0.1, 0.12, 0.05])
+        # Reboot button - larger and positioned for small screen
+        ax_reboot = plt.axes([0.1, 0.08, 0.35, 0.12])
         btn_reboot = Button(ax_reboot, 'Reboot', color='#ff6b6b', hovercolor='#ff5252')
 
         def reboot(event):
@@ -220,9 +229,10 @@ def show_error_screen(error_message):
             subprocess.run(['sudo', 'reboot'], check=False)
 
         btn_reboot.on_clicked(reboot)
+        btn_reboot.label.set_fontsize(9)
 
-        # Shutdown button
-        ax_shutdown = plt.axes([0.53, 0.1, 0.12, 0.05])
+        # Shutdown button - larger and positioned for small screen
+        ax_shutdown = plt.axes([0.55, 0.08, 0.35, 0.12])
         btn_shutdown = Button(ax_shutdown, 'Shutdown', color='#6b6bff', hovercolor='#5252ff')
 
         def shutdown(event):
@@ -231,6 +241,7 @@ def show_error_screen(error_message):
             subprocess.run(['sudo', 'shutdown', '-h', 'now'], check=False)
 
         btn_shutdown.on_clicked(shutdown)
+        btn_shutdown.label.set_fontsize(9)
 
     # Maximize window - platform specific
     mng = plt.get_current_fig_manager()
@@ -267,7 +278,7 @@ if not show_splash_screen():
 # SETUP PLOT
 # -----------------------------
 plt.style.use('dark_background')
-fig, ax = plt.subplots(figsize=(12, 6))
+fig, ax = plt.subplots(figsize=(SCREEN_WIDTH, SCREEN_HEIGHT), dpi=SCREEN_DPI)
 
 # Precompute frequency axis
 freqs = np.fft.rfftfreq(FFT_SIZE, 1/SAMPLE_RATE)
@@ -281,10 +292,11 @@ peak_values = np.zeros(len(infra_freqs))
 bars = ax.bar(infra_freqs, np.zeros(len(infra_freqs)), width=FREQ_RESOLUTION * 0.8, color='cyan')
 ax.set_xlim(LOW_HZ, HIGH_HZ)
 ax.set_ylim(DB_MIN, DB_MAX)
-ax.set_xlabel("Frequency (Hz)", fontsize=12)
-ax.set_ylabel("Magnitude (dB)", fontsize=12)
-ax.set_title(f"Infrasound Spectrum Monitor ({LOW_HZ}-{HIGH_HZ} Hz) | Resolution: {FREQ_RESOLUTION} Hz", fontsize=14)
+ax.set_xlabel("Frequency (Hz)", fontsize=7)
+ax.set_ylabel("dB", fontsize=7)
+ax.set_title(f"Infrasound {LOW_HZ}-{HIGH_HZ} Hz", fontsize=8)
 ax.grid(True, alpha=0.3)
+ax.tick_params(labelsize=6)
 
 # -----------------------------
 # UPDATE FUNCTION
