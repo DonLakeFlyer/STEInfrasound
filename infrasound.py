@@ -8,6 +8,13 @@ import time
 import platform
 import os
 import subprocess
+import sys
+import traceback
+
+# Add logging to help debug
+def log(msg):
+    timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
+    print(f"[{timestamp}] {msg}", flush=True)
 
 # -----------------------------
 # PLATFORM DETECTION
@@ -97,55 +104,74 @@ def show_splash_screen():
     """Show a full-screen splash screen and attempt audio connection."""
     global stream, audio_error, audio_connected
 
-    fig_splash = plt.figure(figsize=(SCREEN_WIDTH, SCREEN_HEIGHT), dpi=SCREEN_DPI)
-    fig_splash.patch.set_facecolor('#1a1a1a')
-    ax_splash = fig_splash.add_subplot(111)
-    ax_splash.set_xlim(0, 1)
-    ax_splash.set_ylim(0, 1)
-    ax_splash.axis('off')
+    try:
+        log("Creating splash screen...")
+        fig_splash = plt.figure(figsize=(SCREEN_WIDTH, SCREEN_HEIGHT), dpi=SCREEN_DPI)
+        fig_splash.patch.set_facecolor('#1a1a1a')
+        ax_splash = fig_splash.add_subplot(111)
+        ax_splash.set_xlim(0, 1)
+        ax_splash.set_ylim(0, 1)
+        ax_splash.axis('off')
 
-    # Main message - smaller fonts for small screen
-    ax_splash.text(0.5, 0.6, 'Infrasound Monitor',
-                   ha='center', va='center', fontsize=14, color='cyan', weight='bold')
-    ax_splash.text(0.5, 0.5, 'Connecting...',
-                   ha='center', va='center', fontsize=10, color='white')
-    ax_splash.text(0.5, 0.42, 'Please wait',
-                   ha='center', va='center', fontsize=8, color='gray')
+        # Main message - smaller fonts for small screen
+        ax_splash.text(0.5, 0.6, 'Infrasound Monitor',
+                       ha='center', va='center', fontsize=14, color='cyan', weight='bold')
+        ax_splash.text(0.5, 0.5, 'Connecting...',
+                       ha='center', va='center', fontsize=10, color='white')
+        ax_splash.text(0.5, 0.42, 'Please wait',
+                       ha='center', va='center', fontsize=8, color='gray')
 
-    # Maximize window - platform specific
-    mng = plt.get_current_fig_manager()
-    if IS_RPI:
-        # Raspberry Pi fullscreen
+        # Maximize window - platform specific
         try:
-            mng.full_screen_toggle()
-        except:
-            try:
-                mng.window.attributes('-fullscreen', True)
-            except:
-                pass
-    else:
-        # Desktop maximize
-        try:
-            mng.window.state('zoomed')  # Windows
-        except:
-            try:
-                mng.full_screen_toggle()  # Some backends
-            except:
-                pass
+            mng = plt.get_current_fig_manager()
+            if IS_RPI:
+                # Raspberry Pi fullscreen
+                try:
+                    mng.window.attributes('-fullscreen', True)
+                    log("Set fullscreen mode")
+                except Exception as e:
+                    log(f"Fullscreen method 1 failed: {e}")
+                    try:
+                        mng.full_screen_toggle()
+                        log("Set fullscreen via toggle")
+                    except Exception as e2:
+                        log(f"Fullscreen method 2 failed: {e2}")
+            else:
+                # Desktop maximize
+                try:
+                    mng.window.state('zoomed')  # Windows
+                except:
+                    try:
+                        mng.full_screen_toggle()  # Some backends
+                    except:
+                        pass
+        except Exception as e:
+            log(f"Error setting window size: {e}")
 
-    plt.tight_layout()
-    plt.show(block=False)
-    plt.draw()
-    plt.pause(0.1)
+        plt.tight_layout()
+        log("Showing splash screen...")
+        plt.show(block=False)
+        plt.draw()
+        plt.pause(0.5)
+        log("Splash screen displayed")
+
+    except Exception as e:
+        log(f"ERROR creating splash screen: {e}")
+        traceback.print_exc()
 
     # Try to connect to audio device during countdown
     for i in range(10, 0, -1):
         if not audio_connected:
-            ax_splash.texts[2].set_text(f'{i}s...')
-            plt.draw()
+            try:
+                ax_splash.texts[2].set_text(f'{i}s...')
+                plt.draw()
+                plt.pause(0.1)
+            except Exception as e:
+                log(f"Error updating splash: {e}")
 
             # Attempt connection
             try:
+                log(f"Attempting audio connection ({i}s remaining)...")
                 stream = sd.InputStream(
                     samplerate=SAMPLE_RATE,
                     channels=1,
@@ -155,117 +181,133 @@ def show_splash_screen():
                 )
                 stream.start()
                 audio_connected = True
-                print(f"Audio stream started at {SAMPLE_RATE} Hz")
-                print(f"FFT size: {FFT_SIZE} samples ({FFT_SIZE/SAMPLE_RATE:.1f} seconds)")
-                print(f"Frequency resolution: {FREQ_RESOLUTION} Hz")
-                print(f"Update rate: {UPDATE_RATE} Hz")
+                log(f"Audio stream started at {SAMPLE_RATE} Hz")
+                log(f"FFT size: {FFT_SIZE} samples ({FFT_SIZE/SAMPLE_RATE:.1f} seconds)")
+                log(f"Frequency resolution: {FREQ_RESOLUTION} Hz")
+                log(f"Update rate: {UPDATE_RATE} Hz")
 
                 # Show success message briefly
-                ax_splash.texts[1].set_text('Connected!')
-                ax_splash.texts[1].set_color('lime')
-                ax_splash.texts[2].set_text('Starting...')
-                plt.draw()
-                plt.pause(1)
+                try:
+                    ax_splash.texts[1].set_text('Connected!')
+                    ax_splash.texts[1].set_color('lime')
+                    ax_splash.texts[2].set_text('Starting...')
+                    plt.draw()
+                    plt.pause(1)
+                except:
+                    pass
                 break
             except Exception as e:
                 audio_error = str(e)
+                log(f"Audio connection failed: {e}")
                 # Keep trying for remaining time
-                plt.pause(1)
+                plt.pause(0.9)
         else:
             break
 
-    plt.close(fig_splash)
+    try:
+        plt.close(fig_splash)
+        log("Splash screen closed")
+    except Exception as e:
+        log(f"Error closing splash: {e}")
 
     # Return connection status
     return audio_connected
 
 def show_error_screen(error_message):
     """Show a full-screen error window."""
-    fig_error = plt.figure(figsize=(SCREEN_WIDTH, SCREEN_HEIGHT), dpi=SCREEN_DPI)
-    fig_error.patch.set_facecolor('#1a1a1a')
-    ax_error = fig_error.add_subplot(111)
-    ax_error.set_xlim(0, 1)
-    ax_error.set_ylim(0, 1)
-    ax_error.axis('off')
+    log(f"Showing error screen: {error_message}")
 
-    # Error message - smaller fonts for small screen
-    ax_error.text(0.5, 0.75, '⚠ Audio Error',
+    try:
+        fig_error = plt.figure(figsize=(SCREEN_WIDTH, SCREEN_HEIGHT), dpi=SCREEN_DPI)
+        fig_error.patch.set_facecolor('#1a1a1a')
+        ax_error = fig_error.add_subplot(111)
+        ax_error.set_xlim(0, 1)
+        ax_error.set_ylim(0, 1)
+        ax_error.axis('off')
+
+        # Error message - smaller fonts for small screen
+        ax_error.text(0.5, 0.75, '⚠ Audio Error',
                   ha='center', va='center', fontsize=14, color='red', weight='bold')
-    ax_error.text(0.5, 0.68, 'Cannot connect',
+        ax_error.text(0.5, 0.68, 'Cannot connect',
                   ha='center', va='center', fontsize=9, color='white')
 
-    # Truncate long error messages
-    short_error = error_message[:40] + '...' if len(error_message) > 40 else error_message
-    ax_error.text(0.5, 0.62, short_error,
+        # Truncate long error messages
+        short_error = error_message[:40] + '...' if len(error_message) > 40 else error_message
+        ax_error.text(0.5, 0.62, short_error,
                   ha='center', va='center', fontsize=6, color='orange', style='italic')
 
-    ax_error.text(0.5, 0.53, 'Check:',
+        ax_error.text(0.5, 0.53, 'Check:',
                   ha='center', va='center', fontsize=8, color='gray')
-    ax_error.text(0.5, 0.48, '• LS-P5 is ON',
+        ax_error.text(0.5, 0.48, '• LS-P5 is ON',
                   ha='center', va='center', fontsize=7, color='lightgray')
-    ax_error.text(0.5, 0.43, '• LS-P5 connected',
+        ax_error.text(0.5, 0.43, '• LS-P5 connected',
                   ha='center', va='center', fontsize=7, color='lightgray')
-    ax_error.text(0.5, 0.38, '• Batteries good',
+        ax_error.text(0.5, 0.38, '• Batteries good',
                   ha='center', va='center', fontsize=7, color='lightgray')
 
-    if IS_RPI:
-        ax_error.text(0.5, 0.28, 'Use buttons or close',
+        if IS_RPI:
+            ax_error.text(0.5, 0.28, 'Use buttons or close',
                       ha='center', va='center', fontsize=6, color='gray', style='italic')
-    else:
-        ax_error.text(0.5, 0.28, 'Close to exit',
+        else:
+            ax_error.text(0.5, 0.28, 'Close to exit',
                       ha='center', va='center', fontsize=6, color='gray', style='italic')
 
-    # Add buttons for Raspberry Pi only - larger for touchscreen
-    if IS_RPI:
-        from matplotlib.widgets import Button
+        # Add buttons for Raspberry Pi only - larger for touchscreen
+        if IS_RPI:
+            from matplotlib.widgets import Button
 
-        # Reboot button - larger and positioned for small screen
-        ax_reboot = plt.axes([0.1, 0.08, 0.35, 0.24])
-        btn_reboot = Button(ax_reboot, 'Reboot', color='#ff6b6b', hovercolor='#ff5252')
+            # Reboot button - larger and positioned for small screen
+            ax_reboot = plt.axes([0.1, 0.08, 0.35, 0.24])
+            btn_reboot = Button(ax_reboot, 'Reboot', color='#ff6b6b', hovercolor='#ff5252')
 
-        def reboot(event):
-            print("Rebooting Raspberry Pi...")
-            plt.close('all')
-            subprocess.run(['sudo', 'reboot'], check=False)
+            def reboot(event):
+                print("Rebooting Raspberry Pi...")
+                plt.close('all')
+                subprocess.run(['sudo', 'reboot'], check=False)
 
-        btn_reboot.on_clicked(reboot)
-        btn_reboot.label.set_fontsize(9)
+            btn_reboot.on_clicked(reboot)
+            btn_reboot.label.set_fontsize(9)
 
-        # Shutdown button - larger and positioned for small screen
-        ax_shutdown = plt.axes([0.55, 0.08, 0.35, 0.24])
-        btn_shutdown = Button(ax_shutdown, 'Shutdown', color='#6b6bff', hovercolor='#5252ff')
+            # Shutdown button - larger and positioned for small screen
+            ax_shutdown = plt.axes([0.55, 0.08, 0.35, 0.24])
+            btn_shutdown = Button(ax_shutdown, 'Shutdown', color='#6b6bff', hovercolor='#5252ff')
 
-        def shutdown(event):
-            print("Shutting down Raspberry Pi...")
-            plt.close('all')
-            subprocess.run(['sudo', 'shutdown', '-h', 'now'], check=False)
+            def shutdown(event):
+                print("Shutting down Raspberry Pi...")
+                plt.close('all')
+                subprocess.run(['sudo', 'shutdown', '-h', 'now'], check=False)
 
-        btn_shutdown.on_clicked(shutdown)
-        btn_shutdown.label.set_fontsize(9)
+            btn_shutdown.on_clicked(shutdown)
+            btn_shutdown.label.set_fontsize(9)
 
-    # Maximize window - platform specific
-    mng = plt.get_current_fig_manager()
-    if IS_RPI:
-        # Raspberry Pi fullscreen
-        try:
-            mng.full_screen_toggle()
-        except:
+        # Maximize window - platform specific
+        mng = plt.get_current_fig_manager()
+        if IS_RPI:
+            # Raspberry Pi fullscreen
             try:
-                mng.window.attributes('-fullscreen', True)
+                mng.full_screen_toggle()
             except:
-                pass
-    else:
-        # Desktop maximize
-        try:
-            mng.window.state('zoomed')  # Windows
-        except:
+                try:
+                    mng.window.attributes('-fullscreen', True)
+                except:
+                    pass
+        else:
+            # Desktop maximize
             try:
-                mng.full_screen_toggle()  # Some backends
+                mng.window.state('zoomed')  # Windows
             except:
-                pass
+                try:
+                    mng.full_screen_toggle()  # Some backends
+                except:
+                    pass
 
-    plt.tight_layout()
-    plt.show()
+        plt.tight_layout()
+        log("Displaying error screen...")
+        plt.show()
+
+    except Exception as e:
+        log(f"ERROR creating error screen: {e}")
+        traceback.print_exc()
 
 # Show splash screen and attempt audio connection
 if not show_splash_screen():
