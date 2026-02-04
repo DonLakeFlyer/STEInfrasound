@@ -220,7 +220,7 @@ def show_error_screen(error_message):
         from matplotlib.widgets import Button
 
         # Reboot button - larger and positioned for small screen
-        ax_reboot = plt.axes([0.1, 0.08, 0.35, 0.12])
+        ax_reboot = plt.axes([0.1, 0.08, 0.35, 0.24])
         btn_reboot = Button(ax_reboot, 'Reboot', color='#ff6b6b', hovercolor='#ff5252')
 
         def reboot(event):
@@ -232,7 +232,7 @@ def show_error_screen(error_message):
         btn_reboot.label.set_fontsize(9)
 
         # Shutdown button - larger and positioned for small screen
-        ax_shutdown = plt.axes([0.55, 0.08, 0.35, 0.12])
+        ax_shutdown = plt.axes([0.55, 0.08, 0.35, 0.24])
         btn_shutdown = Button(ax_shutdown, 'Shutdown', color='#6b6bff', hovercolor='#5252ff')
 
         def shutdown(event):
