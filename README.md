@@ -62,11 +62,29 @@ systemctl status systemd-journald
 
 ### Startup service
 
-mkdir -p ~/.config/systemd/user
-sudo cp /home/pi/repos/STEInfrasound/infrasound_display.service ~/.config/systemd/user
-systemctl --user daemon-reload
-systemctl --user enable infrasound_display.service
-journalctl -u infrasound_display.service
+Use autostart for GUI applications:
+
+```bash
+mkdir -p ~/.config/autostart
+cp /home/pi/repos/STEInfrasound/infrasound_display.desktop ~/.config/autostart/
+```
+
+To check if it will run on next boot:
+```bash
+ls -la ~/.config/autostart/
+```
+
+To remove the old systemd user service (if you had it installed):
+```bash
+systemctl --user disable infrasound_display.service
+systemctl --user stop infrasound_display.service
+rm ~/.config/systemd/user/infrasound_display.service
+```
+
+View logs:
+```bash
+journalctl --user -xe
+```
 
 ## Prerequisites
 
