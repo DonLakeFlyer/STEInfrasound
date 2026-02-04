@@ -19,11 +19,29 @@ import os
 import subprocess
 import sys
 import traceback
+import signal
 
 # Add logging to help debug
 def log(msg):
     timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
     print(f"[{timestamp}] {msg}", flush=True)
+
+# Signal handler for clean shutdown
+def signal_handler(sig, frame):
+    log(f"Received signal {sig}, shutting down...")
+    global stream
+    if stream is not None:
+        try:
+            stream.stop()
+            stream.close()
+        except:
+            pass
+    plt.close('all')
+    sys.exit(0)
+
+# Register signal handlers
+signal.signal(signal.SIGTERM, signal_handler)
+signal.signal(signal.SIGINT, signal_handler)
 
 # -----------------------------
 # PLATFORM DETECTION
