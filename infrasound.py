@@ -104,6 +104,9 @@ def show_splash_screen():
     """Show a full-screen splash screen and attempt audio connection."""
     global stream, audio_error, audio_connected
 
+    fig_splash = None
+    ax_splash = None
+
     try:
         log("Creating splash screen...")
         fig_splash = plt.figure(figsize=(SCREEN_WIDTH, SCREEN_HEIGHT), dpi=SCREEN_DPI)
@@ -161,7 +164,14 @@ def show_splash_screen():
 
     # Try to connect to audio device during countdown
     for i in range(10, 0, -1):
-        if not audio_connected:
+        log(f"Loop iteration: {i} seconds remaining, audio_connected={audio_connected}")
+
+        if audio_connected:
+            log("Already connected, breaking loop")
+            break
+
+        # Update display if we have a splash screen
+        if ax_splash is not None:
             try:
                 ax_splash.texts[2].set_text(f'{i}s...')
                 plt.draw()
@@ -169,48 +179,58 @@ def show_splash_screen():
             except Exception as e:
                 log(f"Error updating splash: {e}")
 
-            # Attempt connection
-            try:
-                log(f"Attempting audio connection ({i}s remaining)...")
-                stream = sd.InputStream(
-                    samplerate=SAMPLE_RATE,
-                    channels=1,
-                    callback=audio_callback,
-                    blocksize=int(SAMPLE_RATE / UPDATE_RATE),
-                    dtype='float32'
-                )
-                stream.start()
-                audio_connected = True
-                log(f"Audio stream started at {SAMPLE_RATE} Hz")
-                log(f"FFT size: {FFT_SIZE} samples ({FFT_SIZE/SAMPLE_RATE:.1f} seconds)")
-                log(f"Frequency resolution: {FREQ_RESOLUTION} Hz")
-                log(f"Update rate: {UPDATE_RATE} Hz")
+        # Attempt connection
+        try:
+            log(f"Attempting audio connection (attempt {11-i}/10)...")
+            stream = sd.InputStream(
+                samplerate=SAMPLE_RATE,
+                channels=1,
+                callback=audio_callback,
+                blocksize=int(SAMPLE_RATE / UPDATE_RATE),
+                dtype='float32'
+            )
+            stream.start()
+            audio_connected = True
+            log(f"SUCCESS! Audio stream started at {SAMPLE_RATE} Hz")
+            log(f"FFT size: {FFT_SIZE} samples ({FFT_SIZE/SAMPLE_RATE:.1f} seconds)")
+            log(f"Frequency resolution: {FREQ_RESOLUTION} Hz")
+            log(f"Update rate: {UPDATE_RATE} Hz")
 
-                # Show success message briefly
+            # Show success message briefly
+            if ax_splash is not None:
                 try:
                     ax_splash.texts[1].set_text('Connected!')
                     ax_splash.texts[1].set_color('lime')
                     ax_splash.texts[2].set_text('Starting...')
                     plt.draw()
                     plt.pause(1)
-                except:
-                    pass
-                break
-            except Exception as e:
-                audio_error = str(e)
-                log(f"Audio connection failed: {e}")
-                # Keep trying for remaining time
-                plt.pause(0.9)
-        else:
+                except Exception as e:
+                    log(f"Error showing success message: {e}")
             break
 
-    try:
-        plt.close(fig_splash)
-        log("Splash screen closed")
-    except Exception as e:
-        log(f"Error closing splash: {e}")
+        except Exception as e:
+            audio_error = str(e)
+            log(f"Audio connection attempt {11-i} failed: {e}")
+
+            # Wait before next attempt (only if not on last iteration)
+            if i > 1:
+                try:
+                    time.sleep(0.9)
+                except Exception as sleep_err:
+                    log(f"Sleep failed: {sleep_err}")
+
+    log(f"Exiting splash screen loop. audio_connected={audio_connected}")
+
+    # Close splash screen
+    if fig_splash is not None:
+        try:
+            plt.close(fig_splash)
+            log("Splash screen closed")
+        except Exception as e:
+            log(f"Error closing splash: {e}")
 
     # Return connection status
+    log(f"Returning connection status: {audio_connected}")
     return audio_connected
 
 def show_error_screen(error_message):
