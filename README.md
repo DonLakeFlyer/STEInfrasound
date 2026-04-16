@@ -1,6 +1,6 @@
-# STEInfrasound WAV Player
+# STEInfrasound
 
-A minimal Python utility that streams a WAV file to the system's default speakers using [`simpleaudio`](https://simpleaudio.readthedocs.io/).
+A suite of Python tools for monitoring and analyzing infrasound (sound below 20 Hz) using USB audio input or WAV files. Includes real-time spectrum analyzers and audio playback utilities with infrasound filtering and frequency translation capabilities.
 
 ## rPi Setup
 
@@ -8,24 +8,34 @@ A minimal Python utility that streams a WAV file to the system's default speaker
 
 Create SD Card using Raspberry Pi Imager:
 
-* Raspberry Pi 4 Model B — 4GB RAM
-* Debian Trixie
-* Set up initial WiFi
-* Turn on SSH with password authentification
-* Turn on Raspberry Pi Connect
+- Raspberry Pi 4 Model B — 4GB RAM
+- Debian Trixie
+- Set up initial WiFi
+- Turn on SSH with password authentication
+- Turn on Raspberry Pi Connect
 
 ### Install software onto rPi
 
-* cd ~/Downloads
-* wget https://raw.githubusercontent.com/DonLakeFlyer/STEInfrasound/main/rpi_setup.sh
-* chmod +X rpi_setup.sh
-* ./rpi_setup.sh
+```bash
+cd ~/Downloads
+wget https://raw.githubusercontent.com/DonLakeFlyer/STEInfrasound/main/rpi_setup.sh
+chmod +x rpi_setup.sh
+./rpi_setup.sh
+```
 
 ### Setup SMB
 
+Configure Samba file sharing for remote access to the Raspberry Pi home directory:
+
+```bash
 sudo apt install samba samba-common-bin
 
 sudo nano /etc/samba/smb.conf
+```
+
+Add this configuration:
+
+```ini
 [home]
    path = /home/pi
    browseable = yes
@@ -34,12 +44,20 @@ sudo nano /etc/samba/smb.conf
    create mask = 0775
    directory mask = 0775
    public = yes
+```
 
+Set Samba password and restart:
+
+```bash
 sudo smbpasswd -a pi
 sudo systemctl restart smbd
+```
 
 ### Setup Journaling
 
+Configure persistent systemd journal logging:
+
+```bash
 sudo mkdir -p /var/log/journal
 sudo mkdir -p /var/log/journal/$(cat /etc/machine-id)
 sudo chown root:systemd-journal /var/log/journal
@@ -50,19 +68,27 @@ sudo setfacl -R -nm u:pi:rx /var/log/journal
 
 sudo mkdir -p /etc/systemd/journald.conf.d
 sudo nano /etc/systemd/journald.conf.d/override.conf
+```
 
+Add this configuration:
+
+```ini
 [Journal]
 Storage=persistent
+```
 
+Finalize setup:
+
+```bash
 sudo rm -rf /var/log/journal
 sudo systemd-tmpfiles --create
-
 reboot
 systemctl status systemd-journald
+```
 
 ### Startup service
 
-Use autostart for GUI applications:
+The Raspberry Pi is configured to automatically launch `infrasound.py` on boot using autostart for GUI applications:
 
 ```bash
 # Make sure start script is executable
@@ -106,70 +132,139 @@ journalctl --user -xe
 
 ## Prerequisites
 
-- Python 3.9 or newer (tested on macOS)
+- Python 3.9 or newer
 - `pip` for installing dependencies
+- On macOS: `brew install portaudio` (required for sounddevice)
 
 ## Setup
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m venv venv
+source venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-## Usage
+## Applications
+
+### Real-Time Infrasound Display (`infrasound.py`)
+
+Live infrasound spectrum analyzer designed for Raspberry Pi with 3.5" display. This is the main application that runs on the Raspberry Pi at startup.
 
 ```bash
-python ste_infrasound.py path/to/file.wav
+python infrasound.py
 ```
 
-### Options
+**Features:**
+- Displays real-time FFT of 10-30 Hz band (infrasound + elephant rumble harmonics)
+- Adaptive noise floor with dB-above-background display
+- Color-coded signal strength (cyan/yellow/orange/red)
+- 0.5 Hz frequency resolution
+- Optimized for 320x480 touchscreen displays
+- Auto-detects Raspberry Pi platform
+- Peak decay visualization
 
-- `--no-block` — start playback and return immediately instead of waiting until the audio finishes.
+### WAV File Playback with Processing (`ste_infrasound.py`)
 
-### Example
+Play WAV files with optional infrasound filtering and frequency translation.
 
 ```bash
+# Basic playback
 python ste_infrasound.py audio/example.wav
+
+# Filter to infrasound band only
+python ste_infrasound.py audio/example.wav --infra-only --infra-low 0.1 --infra-high 20
+
+# Translate infrasound to audible range (SSB upconversion)
+python ste_infrasound.py audio/example.wav --translate-infra --translate-carrier 200 --translate-gain 2.0
 ```
 
-If you see an error about missing `simpleaudio`, ensure the virtual environment is activated and the requirements were installed.
+**Options:**
+- `--no-block` — Return immediately after starting playback
+- `--infra-only` — Filter to infrasound band before playback
+- `--infra-low FREQ` — Infrasound lower cutoff in Hz (default: 0.1)
+- `--infra-high FREQ` — Infrasound upper cutoff in Hz (default: 20.0)
+- `--translate-infra` — Translate infrasound to audible range using SSB
+- `--translate-carrier FREQ` — Carrier frequency for translation (default: 200 Hz)
+- `--translate-gain GAIN` — Gain multiplier after translation (default: 1.0)
 
-## Live FFT from USB input
+### General-Purpose Live FFT (`realtime_fft.py`)
 
-Capture from an input device (e.g., USB mic) and display a real-time spectrum:
+Flexible real-time spectrum analyzer with USB audio input support.
 
 ```bash
+# List available audio devices
+python realtime_fft.py --list-devices
+
+# Audible spectrum from USB device
 python realtime_fft.py --device usb --sample-rate 48000 --fft-size 4096
+
+# Infrasound spectrum in fullscreen
+python realtime_fft.py --spectrum-type infrasound --fullscreen
 ```
 
-- Omit `--device` to use the default input. The value is a case-insensitive substring of the device name.
-- Close the plot window to stop capture.
-- On macOS, install PortAudio if `sounddevice` cannot find it: `brew install portaudio`.
+**Options:**
+- `--device NAME` — Device name substring (e.g., 'usb')
+- `--sample-rate RATE` — Sample rate in Hz (default: 48000)
+- `--fft-size SIZE` — FFT size (default: 2048)
+- `--spectrum-type TYPE` — 'audible' or 'infrasound' (default: audible)
+- `--fullscreen` — Display in fullscreen mode
+- `--y-min DB` — Lower Y limit in dBFS (default: -120)
+- `--y-max DB` — Upper Y limit in dBFS (default: 10)
+
+### Elephant Rumble Monitor (`realtime_infrasound.py`)
+
+Specialized real-time display for elephant infrasound rumbles (5-25 Hz).
+
+```bash
+python realtime_infrasound.py
+```
+
+**Features:**
+- Fixed 5-25 Hz display range
+- Auto-selects best available sample rate (8-48 kHz)
+- 16000-point FFT for high frequency resolution
 
 ## Troubleshooting
 
-- **No sound:** Double-check your system volume and output device.
-- **`ValueError: Only .wav files are supported`:** Convert your audio file to uncompressed PCM WAV format.
+### Audio Issues
+- **No sound (ste_infrasound.py):** Check system volume and output device
+- **`ValueError: Only .wav files are supported`:** Convert audio to uncompressed PCM WAV format
+- **PortAudio errors:** On macOS, run `brew install portaudio`
+
+### Display Issues
+- **GUI doesn't start on Raspberry Pi:** Check `~/infrasound_startup.log` for errors
+- **Wrong screen size:** Verify DISPLAY environment variable is set correctly
 
 ### Find rPi over WiFi
 
+```bash
 ping -c 1 raspberrypi.local
+```
 
 ### Raspberry Pi Connect
 
-Allows you to access rPi desktop from a web browser
+Allows remote access to the Raspberry Pi desktop from a web browser.
 
-### Turn off removable media popup which shows when you plug in the LS-P5
+### Turn off removable media popup
 
-`nano ~/.config/pcmanfm/LXDE-pi/pcmanfm.conf`
+Disable the popup that appears when you plug in the LS-P5:
 
+```bash
+nano ~/.config/pcmanfm/LXDE-pi/pcmanfm.conf
 ```
+
+Add this configuration:
+
+```ini
 [volume]
 mount_on_startup=0
 mount_removable=0
 autorun=0
 ```
 
-`lxpanelctl restart`
+Restart the panel:
+
+```bash
+lxpanelctl restart
+```
