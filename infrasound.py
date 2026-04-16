@@ -83,13 +83,22 @@ FFT_SIZE = int(SAMPLE_RATE / FREQ_RESOLUTION)
 # Buffer size should be enough for smooth updates
 BUFFER_SIZE = FFT_SIZE  # Keep full FFT size for resolution
 
-# Infrasound range (below human hearing, typically < 20 Hz)
-LOW_HZ = 0.5
-HIGH_HZ = 20
+# Infrasound + low-frequency range (includes elephant rumble harmonics up to 30 Hz)
+LOW_HZ = 10
+HIGH_HZ = 30
 
-# Display settings
+# Display settings - relative to noise floor
 DB_MIN = 0
-DB_MAX = 100
+DB_MAX = 30
+
+# Microphone calibration
+# LS-P5 max SPL is ~120 dB, meaning 0 dBFS ≈ 120 dB SPL
+# Adjust this value if you calibrate against a known reference
+MIC_CAL_OFFSET = 120  # dB SPL at full scale (0 dBFS)
+
+# Noise floor tracking - asymmetric adaptation
+NOISE_FLOOR_ALPHA_UP = 0.005   # Slow rise (~100s time constant) - signals don't inflate floor
+NOISE_FLOOR_ALPHA_DOWN = 0.05  # Fast drop (~10s time constant) - floor settles quickly after signal ends
 
 # Peak decay settings
 DECAY_RATE = 0.90  # Multiplier per update (0.90 = 10% decay per update)
@@ -395,15 +404,29 @@ infra_freqs = freqs[infrasound_mask]
 # Initialize peak values
 peak_values = np.zeros(len(infra_freqs))
 
+# Initialize noise floor (will adapt from first few frames)
+noise_floor = None
+noise_floor_warmup = 0
+NOISE_FLOOR_WARMUP_FRAMES = 10  # Use fast adaptation for first N frames (~5 seconds)
+
+# Precompute window function and normalization factor
+window = np.hanning(FFT_SIZE)
+window_sum = np.sum(window)
+
 # Initialize bars
 bars = ax.bar(infra_freqs, np.zeros(len(infra_freqs)), width=FREQ_RESOLUTION * 0.8, color='cyan')
 ax.set_xlim(LOW_HZ, HIGH_HZ)
 ax.set_ylim(DB_MIN, DB_MAX)
 ax.set_xlabel("Frequency (Hz)", fontsize=7)
-ax.set_ylabel("dB", fontsize=7)
+ax.set_ylabel("dB above background", fontsize=7)
 ax.set_title(f"Infrasound {LOW_HZ}-{HIGH_HZ} Hz", fontsize=8)
 ax.grid(True, alpha=0.3)
 ax.tick_params(labelsize=6)
+
+# Noise floor display
+noise_text = ax.text(0.02, 0.95, '', transform=ax.transAxes,
+                     ha='left', va='top', fontsize=5, color='gray',
+                     fontfamily='monospace')
 
 # -----------------------------
 # MENU DIALOG
@@ -527,36 +550,66 @@ fig.canvas.mpl_connect('button_press_event', on_click)
 # UPDATE FUNCTION
 # -----------------------------
 def update_plot(frame):
-    global audio_buffer, peak_values
+    global audio_buffer, peak_values, noise_floor, noise_floor_warmup
 
     # Get a snapshot of the buffer
     audio_snapshot = audio_buffer.copy()
 
     # Apply window function and compute FFT
-    windowed = audio_snapshot * np.hanning(FFT_SIZE)
+    windowed = audio_snapshot * window
     spectrum = np.fft.rfft(windowed)
-    magnitude = np.abs(spectrum)
+    # Normalize to get amplitude relative to full scale
+    magnitude = np.abs(spectrum) * 2.0 / window_sum
 
     # Extract infrasound band
     infra_mag = magnitude[infrasound_mask]
 
-    # Convert to dB
-    infra_db = 20 * np.log10(infra_mag + 1e-10)
+    # Convert to dB SPL
+    infra_db = 20 * np.log10(infra_mag + 1e-10) + MIC_CAL_OFFSET
+
+    # Update noise floor (asymmetric exponential moving average)
+    if noise_floor is None:
+        noise_floor = infra_db.copy()
+        noise_floor_warmup = 1
+    elif noise_floor_warmup < NOISE_FLOOR_WARMUP_FRAMES:
+        # Fast convergence during warmup (buffer may be partially empty)
+        noise_floor = 0.3 * infra_db + 0.7 * noise_floor
+        noise_floor_warmup += 1
+    else:
+        # Slow adaptation upward (signals don't raise floor)
+        # Fast adaptation downward (floor drops when quiet)
+        alpha = np.where(infra_db > noise_floor, NOISE_FLOOR_ALPHA_UP, NOISE_FLOOR_ALPHA_DOWN)
+        noise_floor = alpha * infra_db + (1 - alpha) * noise_floor
+
+    # Compute dB above noise floor
+    relative_db = infra_db - noise_floor
 
     # Apply decay to existing peaks
     peak_values *= DECAY_RATE
 
     # Update peaks if current value is higher
-    peak_values = np.maximum(peak_values, infra_db)
+    peak_values = np.maximum(peak_values, relative_db)
 
     # Clip to display range
     display_values = np.clip(peak_values, DB_MIN, DB_MAX)
 
-    # Update bars
+    # Update bars with color coding
     for bar, height in zip(bars, display_values):
         bar.set_height(height)
+        if height >= 15:
+            bar.set_color('#ff4444')    # Red: strong signal
+        elif height >= 8:
+            bar.set_color('#ffaa00')    # Orange: moderate signal
+        elif height >= 3:
+            bar.set_color('#ffff44')    # Yellow: weak signal
+        else:
+            bar.set_color('cyan')       # Cyan: background
 
-    return bars
+    # Show noise floor level
+    avg_floor = np.mean(noise_floor)
+    noise_text.set_text(f"floor: {avg_floor:.0f} dB SPL")
+
+    return list(bars) + [noise_text]
 
 # -----------------------------
 # RUN ANIMATION
@@ -565,7 +618,7 @@ ani = FuncAnimation(
     fig,
     update_plot,
     interval=int(1000 / UPDATE_RATE),  # milliseconds (500ms for 2 Hz)
-    blit=True,
+    blit=False,
     cache_frame_data=False
 )
 
