@@ -678,7 +678,7 @@ def update_plot(frame):
     # Update bars with color coding
     for bar, height in zip(bars, display_values):
         bar.set_height(height)
-        if height >= 15:
+        if height >= 16:
             bar.set_color('#ff4444')    # Red: strong signal
         elif height >= 8:
             bar.set_color('#ffaa00')    # Orange: moderate signal
