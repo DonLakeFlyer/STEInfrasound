@@ -468,7 +468,7 @@ window = np.hanning(FFT_SIZE)
 window_sum = np.sum(window)
 
 # HPS detector - needs full spectrum freqs, not just display band
-hps_detector = HPSDetector(freqs, fund_low=10.0, fund_high=25.0, num_harmonics=3)
+hps_detector = HPSDetector(freqs, fund_low=10.0, fund_high=25.0, num_harmonics=3, threshold_db=18.0)
 active_markers = []  # list of (fundamental_hz, birth_time, annotation)
 MARKER_DURATION = 3.0  # seconds before marker fades out
 
