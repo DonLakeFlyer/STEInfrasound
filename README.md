@@ -155,8 +155,14 @@ Live infrasound spectrum analyzer designed for Raspberry Pi with 3.5" display. T
 python infrasound.py
 ```
 
+**Test mode** (no microphone needed — generates a synthetic 18 Hz elephant rumble with harmonics, cycling 8s on / 8s off):
+
+```bash
+python infrasound.py --test
+```
+
 **Features:**
-- Displays real-time FFT of 10-30 Hz band (infrasound + elephant rumble harmonics)
+- Displays real-time FFT of 10-50 Hz band (infrasound + elephant rumble harmonics)
 - Adaptive noise floor with dB-above-background display
 - Color-coded signal strength (cyan/yellow/orange/red)
 - 0.5 Hz frequency resolution

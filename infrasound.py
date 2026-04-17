@@ -19,7 +19,9 @@ if os.environ.get('DISPLAY'):
         except:
             pass
 import matplotlib.pyplot as plt
+import matplotlib.patheffects
 from matplotlib.animation import FuncAnimation
+from hps import HPSDetector
 
 # Add logging to help debug
 def log(msg):
@@ -42,6 +44,11 @@ def signal_handler(sig, frame):
 # Register signal handlers
 signal.signal(signal.SIGTERM, signal_handler)
 signal.signal(signal.SIGINT, signal_handler)
+
+# -----------------------------
+# TEST MODE
+# -----------------------------
+TEST_MODE = '--test' in sys.argv
 
 # -----------------------------
 # PLATFORM DETECTION
@@ -83,9 +90,9 @@ FFT_SIZE = int(SAMPLE_RATE / FREQ_RESOLUTION)
 # Buffer size should be enough for smooth updates
 BUFFER_SIZE = FFT_SIZE  # Keep full FFT size for resolution
 
-# Infrasound + low-frequency range (includes elephant rumble harmonics up to 30 Hz)
+# Infrasound + low-frequency range (includes elephant rumble harmonics up to 50 Hz)
 LOW_HZ = 10
-HIGH_HZ = 30
+HIGH_HZ = 50
 
 # Display settings - relative to noise floor
 DB_MIN = 0
@@ -119,6 +126,9 @@ stream = None
 audio_error = None
 audio_connected = False
 
+# Test mode state
+test_time_s = 8.0  # time accumulator (seconds) - start in OFF cycle so prefill is noise-only
+
 # -----------------------------
 # AUDIO CALLBACK
 # -----------------------------
@@ -132,6 +142,44 @@ def audio_callback(indata, frames, time_info, status):
     data = indata[:, 0]
     audio_buffer = np.roll(audio_buffer, -len(data))
     audio_buffer[-len(data):] = data
+
+def generate_test_signal():
+    """Generate synthetic elephant rumble + noise for test mode.
+
+    Cycles: 8s rumble ON, 8s rumble OFF.
+    Rumble = 18 Hz fundamental + 36 Hz (2nd harmonic) + 54 Hz (3rd harmonic)
+    with amplitudes modelling EM272 mic rolloff below 20 Hz (fundamental
+    attenuated, 2nd harmonic strongest, 3rd intermediate).
+    Background = low-level white Gaussian noise.
+    """
+    global audio_buffer, test_time_s
+
+    block_size = int(SAMPLE_RATE / UPDATE_RATE)
+    t = np.arange(block_size) / SAMPLE_RATE + test_time_s
+
+    # Cycle: 8s on, 8s off (decide before advancing time so boundary is correct)
+    cycle_time = test_time_s % 16.0
+    test_time_s += block_size / SAMPLE_RATE
+
+    # Background noise (low amplitude)
+    noise = np.random.randn(block_size).astype('float32') * 0.002
+
+    if cycle_time < 8.0:
+        # Elephant rumble: 18 Hz fundamental + harmonics
+        fundamental = 18.0
+        rumble = (
+            0.003 * np.sin(2 * np.pi * fundamental * t) +       # f0
+            0.006 * np.sin(2 * np.pi * 2 * fundamental * t) +   # 2f
+            0.004 * np.sin(2 * np.pi * 3 * fundamental * t)     # 3f
+        ).astype('float32')
+
+        signal_data = noise + rumble
+    else:
+        signal_data = noise
+
+    # Roll buffer and append
+    audio_buffer = np.roll(audio_buffer, -block_size)
+    audio_buffer[-block_size:] = signal_data
 
 # -----------------------------
 # SPLASH SCREEN
@@ -384,7 +432,13 @@ def show_error_screen(error_message):
         traceback.print_exc()
 
 # Show splash screen and attempt audio connection
-if not show_splash_screen():
+if TEST_MODE:
+    log("TEST MODE: using synthetic elephant rumble signal")
+    audio_connected = True
+    # Pre-fill buffer with a few blocks of noise so noise floor initializes
+    for _ in range(5):
+        generate_test_signal()
+elif not show_splash_screen():
     # Connection failed after timeout
     print(f"Error opening audio stream: {audio_error}")
     show_error_screen(audio_error if audio_error else "Connection timeout")
@@ -412,6 +466,11 @@ NOISE_FLOOR_WARMUP_FRAMES = 10  # Use fast adaptation for first N frames (~5 sec
 # Precompute window function and normalization factor
 window = np.hanning(FFT_SIZE)
 window_sum = np.sum(window)
+
+# HPS detector - needs full spectrum freqs, not just display band
+hps_detector = HPSDetector(freqs, fund_low=10.0, fund_high=25.0, num_harmonics=3)
+active_markers = []  # list of (fundamental_hz, birth_time, annotation)
+MARKER_DURATION = 3.0  # seconds before marker fades out
 
 # Initialize bars
 bars = ax.bar(infra_freqs, np.zeros(len(infra_freqs)), width=FREQ_RESOLUTION * 0.8, color='cyan')
@@ -445,20 +504,13 @@ def show_menu_dialog():
     log("Showing menu dialog...")
     menu_dialog = plt.figure(figsize=(SCREEN_WIDTH, SCREEN_HEIGHT), dpi=SCREEN_DPI)
     menu_dialog.patch.set_facecolor('#1a1a1a')
-    ax_menu = menu_dialog.add_subplot(111)
-    ax_menu.set_xlim(0, 1)
-    ax_menu.set_ylim(0, 1)
-    ax_menu.axis('off')
-
-    # Title
-    ax_menu.text(0.5, 0.75, 'Menu',
-                 ha='center', va='center', fontsize=16, color='cyan', weight='bold')
 
     menu_buttons = []
 
     if IS_RPI:
-        # Reboot button
-        ax_reboot = plt.axes([0.2, 0.5, 0.6, 0.1])
+        # Three buttons filling the screen: Reboot, Shutdown, Cancel
+        # Each button gets ~1/3 of the screen height with small gaps
+        ax_reboot = menu_dialog.add_axes([0.05, 0.68, 0.9, 0.28])
         btn_reboot = Button(ax_reboot, 'Reboot', color='#ff6b6b', hovercolor='#ff5252')
 
         def reboot(event):
@@ -467,11 +519,10 @@ def show_menu_dialog():
             subprocess.run(['sudo', 'reboot'], check=False)
 
         btn_reboot.on_clicked(reboot)
-        btn_reboot.label.set_fontsize(10)
+        btn_reboot.label.set_fontsize(16)
         menu_buttons.append(btn_reboot)
 
-        # Shutdown button
-        ax_shutdown = plt.axes([0.2, 0.35, 0.6, 0.1])
+        ax_shutdown = menu_dialog.add_axes([0.05, 0.36, 0.9, 0.28])
         btn_shutdown = Button(ax_shutdown, 'Shutdown', color='#6b6bff', hovercolor='#5252ff')
 
         def shutdown(event):
@@ -480,11 +531,15 @@ def show_menu_dialog():
             subprocess.run(['sudo', 'shutdown', '-h', 'now'], check=False)
 
         btn_shutdown.on_clicked(shutdown)
-        btn_shutdown.label.set_fontsize(10)
+        btn_shutdown.label.set_fontsize(16)
         menu_buttons.append(btn_shutdown)
+
+        ax_cancel = menu_dialog.add_axes([0.05, 0.04, 0.9, 0.28])
+        btn_cancel = Button(ax_cancel, 'Cancel', color='#4a4a4a', hovercolor='#5a5a5a')
     else:
-        # Exit button for desktop
-        ax_exit = plt.axes([0.2, 0.5, 0.6, 0.1])
+        # Two buttons filling the screen: Exit, Cancel
+        # Each button gets ~1/2 of the screen height with small gap
+        ax_exit = menu_dialog.add_axes([0.05, 0.52, 0.9, 0.44])
         btn_exit = Button(ax_exit, 'Exit', color='#ff6b6b', hovercolor='#ff5252')
 
         def exit_program(event):
@@ -493,12 +548,11 @@ def show_menu_dialog():
             sys.exit(0)
 
         btn_exit.on_clicked(exit_program)
-        btn_exit.label.set_fontsize(10)
+        btn_exit.label.set_fontsize(18)
         menu_buttons.append(btn_exit)
 
-    # Cancel button (for both platforms)
-    ax_cancel = plt.axes([0.2, 0.2, 0.6, 0.1])
-    btn_cancel = Button(ax_cancel, 'Cancel', color='#4a4a4a', hovercolor='#5a5a5a')
+        ax_cancel = menu_dialog.add_axes([0.05, 0.04, 0.9, 0.44])
+        btn_cancel = Button(ax_cancel, 'Cancel', color='#4a4a4a', hovercolor='#5a5a5a')
 
     def cancel(event):
         global menu_dialog, menu_buttons
@@ -509,7 +563,7 @@ def show_menu_dialog():
             menu_buttons = []
 
     btn_cancel.on_clicked(cancel)
-    btn_cancel.label.set_fontsize(10)
+    btn_cancel.label.set_fontsize(16 if IS_RPI else 18)
     menu_buttons.append(btn_cancel)
 
     # Maximize window
@@ -550,7 +604,11 @@ fig.canvas.mpl_connect('button_press_event', on_click)
 # UPDATE FUNCTION
 # -----------------------------
 def update_plot(frame):
-    global audio_buffer, peak_values, noise_floor, noise_floor_warmup
+    global audio_buffer, peak_values, noise_floor, noise_floor_warmup, active_markers
+
+    # In test mode, generate synthetic data each frame
+    if TEST_MODE:
+        generate_test_signal()
 
     # Get a snapshot of the buffer
     audio_snapshot = audio_buffer.copy()
@@ -580,6 +638,30 @@ def update_plot(frame):
         # Fast adaptation downward (floor drops when quiet)
         alpha = np.where(infra_db > noise_floor, NOISE_FLOOR_ALPHA_UP, NOISE_FLOOR_ALPHA_DOWN)
         noise_floor = alpha * infra_db + (1 - alpha) * noise_floor
+
+    # HPS detection - feed full magnitude spectrum
+    now = time.time()
+    event = hps_detector.update(magnitude, now)
+    if event is not None:
+        log(f"HPS detection: {event.fundamental_hz:.1f} Hz, {event.hps_peak_db:.1f} dB")
+        # Add marker annotation
+        ann = ax.annotate('\u25BC', xy=(event.fundamental_hz, DB_MAX),
+                          ha='center', va='top', fontsize=10, color='white',
+                          fontweight='bold',
+                          path_effects=[matplotlib.patheffects.withStroke(linewidth=2, foreground='black')])
+        active_markers.append((event.fundamental_hz, now, ann))
+
+    # Age out old markers, update alpha for fading
+    surviving = []
+    for freq, birth, ann in active_markers:
+        age = now - birth
+        if age >= MARKER_DURATION:
+            ann.remove()
+            continue
+        alpha_fade = max(0.0, 1.0 - (age / MARKER_DURATION))
+        ann.set_alpha(alpha_fade)
+        surviving.append((freq, birth, ann))
+    active_markers = surviving
 
     # Compute dB above noise floor
     relative_db = infra_db - noise_floor
