@@ -48,7 +48,7 @@ class HPSDetector:
     """
 
     def __init__(self, freqs, fund_low=10.0, fund_high=25.0,
-                 num_harmonics=3, threshold_db=15.0,
+                 num_harmonics=3, threshold_db=18.0,
                  persistence_frames=3, median_frames=5):
         self.freqs = freqs
         self.fund_low = fund_low
