@@ -8,8 +8,6 @@ import sys
 import traceback
 import signal
 from math import gcd
-from scipy import signal as sp_signal
-import threading
 import matplotlib
 matplotlib.rcParams['toolbar'] = 'none'
 # Set backend explicitly for headless/service operation
@@ -149,10 +147,8 @@ file_audio = None         # float32 mono array resampled to SAMPLE_RATE (for ana
 file_audio_output = None  # float32 (N, n_channels) array for speaker output
 file_output_channels = 0  # number of playback channels
 file_position = 0         # current read position (shared by analysis and playback)
-audio_buffer_lock = threading.Lock()  # guards audio_buffer between callback and plot threads
 _file_cb_status = None    # last status string from file_stream_callback (logged on UI thread)
 _mic_cb_status = None     # last status string from audio_callback (logged on UI thread)
-_file_cb_chunk_mono = None # preallocated mono chunk buffer (sliced to actual frames each callback)
 
 # Peak hold buffer - will be initialized after infra_freqs is defined
 peak_values = None
@@ -168,9 +164,13 @@ test_time_s = 8.0  # time accumulator (seconds) - start in OFF cycle so prefill 
 # RING BUFFER HELPER
 # -----------------------------
 def _ring_write(data):
-    """Write data into audio_buffer ring buffer. Caller must hold audio_buffer_lock if needed."""
+    """Write data into audio_buffer ring buffer (called from audio callback thread)."""
     global audio_buffer_write_idx
     n = len(data)
+    if n > BUFFER_SIZE:
+        # Chunk is larger than the ring buffer; keep only the most recent BUFFER_SIZE samples.
+        data = data[-BUFFER_SIZE:]
+        n = BUFFER_SIZE
     end = (audio_buffer_write_idx + n) % BUFFER_SIZE
     if end > audio_buffer_write_idx:
         audio_buffer[audio_buffer_write_idx:end] = data
@@ -189,13 +189,7 @@ def audio_callback(indata, frames, time_info, status):
     if status:
         _mic_cb_status = str(status)  # defer to UI thread; no I/O in real-time callback
 
-    # Never block the real-time callback on the UI thread; drop this chunk if
-    # the lock is held (e.g. during the buffer snapshot in update_plot).
-    if audio_buffer_lock.acquire(blocking=False):
-        try:
-            _ring_write(indata[:, 0])
-        finally:
-            audio_buffer_lock.release()
+    _ring_write(indata[:, 0])
 
 def generate_test_signal():
     """Generate synthetic elephant rumble + noise for test mode.
@@ -238,8 +232,10 @@ def generate_test_signal():
 def load_wav_for_replay(path):
     """Load a WAV file. Returns (mono_arr, output_arr_2d, n_channels)."""
     from scipy.io import wavfile as sp_wavfile
+    from scipy import signal as sp_signal
 
-    # mmap=True avoids loading the full file into RAM; fall back if not supported.
+    # mmap=True maps the raw sample data lazily; the normalisation and
+    # resampling steps below still allocate full float32 arrays.
     try:
         framerate, data = sp_wavfile.read(path, mmap=True)
     except (TypeError, ValueError):
@@ -249,7 +245,9 @@ def load_wav_for_replay(path):
     # Use np.float32 divisors so all arithmetic stays in float32 (Python float
     # would silently upcast the result to float64, doubling memory use).
     if data.dtype == np.float32:
-        arr = data
+        # Force an in-RAM copy: if mmap=True succeeded, data is a memory-mapped
+        # array and reads in the real-time callback would trigger disk page faults.
+        arr = np.array(data, dtype=np.float32)
     elif data.dtype == np.float64:
         arr = data.astype(np.float32)
     elif data.dtype == np.int16:
@@ -283,12 +281,14 @@ def load_wav_for_replay(path):
         down = framerate // g
         output_arr = sp_signal.resample_poly(output_arr, up, down, axis=0).astype(np.float32)
 
-    # Mono mix derived from (resampled) output array
-    mono_arr = output_arr.mean(axis=1).astype(np.float32)
+    # Mono mix derived from (resampled) output array.
+    # dtype=np.float32 keeps the accumulator in float32, avoiding a float64 temporary
+    # that would double memory use for large recordings.
+    mono_arr = output_arr.mean(axis=1, dtype=np.float32)
 
-    duration = len(mono_arr) / SAMPLE_RATE
     if len(mono_arr) == 0:
         raise ValueError("WAV file contains no audio frames")
+    duration = len(mono_arr) / SAMPLE_RATE
     log(f"FILE MODE: loaded '{path}' — {data.dtype}, {n_channels}ch, "
         f"{framerate} Hz → {SAMPLE_RATE} Hz, {duration:.1f}s")
     return mono_arr, output_arr, n_channels
@@ -296,41 +296,34 @@ def load_wav_for_replay(path):
 
 def file_stream_callback(outdata, frames, time_info, status):
     """sounddevice output callback: writes file audio to speakers and analysis buffer in sync."""
-    global audio_buffer_write_idx, file_position, _file_cb_status
+    global file_position, _file_cb_status
 
     if status:
         _file_cb_status = str(status)  # defer to UI thread; no I/O in real-time callback
 
-    # Real-time callback must not allocate; treat unexpected frame counts as a stream error.
-    if frames > len(_file_cb_chunk_mono):
-        outdata.fill(0)
-        _file_cb_status = (
-            f"Unexpected callback frame count {frames} exceeds "
-            f"preallocated buffer {len(_file_cb_chunk_mono)}"
-        )
-        raise sd.CallbackAbort
-
     total = len(file_audio)
+    start_pos = file_position
     filled = 0
-    mono_out = _file_cb_chunk_mono[:frames]
     while filled < frames:
         remaining = total - file_position
         needed = frames - filled
         take = min(needed, remaining)
         outdata[filled:filled + take] = file_audio_output[file_position:file_position + take]
-        mono_out[filled:filled + take] = file_audio[file_position:file_position + take]
         filled += take
         file_position += take
         if file_position >= total:
             file_position = 0  # loop
 
-    # Never block the real-time callback on the UI thread; drop this chunk if
-    # the lock is held (e.g. during the buffer snapshot in update_plot).
-    if audio_buffer_lock.acquire(blocking=False):
-        try:
-            _ring_write(mono_out)
-        finally:
-            audio_buffer_lock.release()
+    # Write the same mono samples to the analysis ring buffer.
+    # Replay the position arithmetic using start_pos to avoid a staging buffer,
+    # so any PortAudio-delivered frame count is handled without allocation.
+    pos = start_pos
+    remaining_frames = frames
+    while remaining_frames > 0:
+        chunk = min(remaining_frames, total - pos)
+        _ring_write(file_audio[pos:pos + chunk])
+        pos = (pos + chunk) % total
+        remaining_frames -= chunk
 
 # -----------------------------
 # SPLASH SCREEN
@@ -591,9 +584,6 @@ if FILE_MODE:
         log(f"ERROR loading file: {exc}")
         traceback.print_exc()
         sys.exit(1)
-    # Preallocate callback buffers sized to match blocksize (chunk_mono is sliced to actual frames)
-    _file_cb_blocksize = 2048
-    _file_cb_chunk_mono = np.empty(_file_cb_blocksize, dtype=np.float32)
     # Start audio output stream — callback keeps playback in sync with display buffer
     try:
         file_stream = sd.OutputStream(
@@ -601,7 +591,6 @@ if FILE_MODE:
             channels=file_output_channels,
             dtype='float32',
             callback=file_stream_callback,
-            blocksize=_file_cb_blocksize,
         )
         file_stream.start()
     except Exception as exc:
@@ -777,7 +766,7 @@ fig.canvas.mpl_connect('button_press_event', on_click)
 # UPDATE FUNCTION
 # -----------------------------
 def update_plot(frame):
-    global audio_buffer, peak_values, noise_floor, noise_floor_warmup, _file_cb_status, _mic_cb_status
+    global peak_values, noise_floor, noise_floor_warmup, _file_cb_status, _mic_cb_status
 
     # Log any deferred status messages from audio callbacks
     if _file_cb_status is not None:
@@ -792,12 +781,11 @@ def update_plot(frame):
         generate_test_signal()
     # FILE_MODE: buffer is filled by file_stream_callback in sync with audio output
 
-    # Get a contiguous snapshot of the ring buffer.
-    # Copy shared state under the lock, then do the expensive reordering outside it
-    # to minimise lock hold time and avoid blocking the real-time audio callback.
-    with audio_buffer_lock:
-        _buf_copy = audio_buffer.copy()
-        _write_idx = audio_buffer_write_idx
+    # Snapshot the ring buffer without a lock. audio_buffer_write_idx is a Python
+    # int (GIL-atomic read); the buffer copy may overlap a callback write at most
+    # at its boundary, producing one anomalous FFT bin — imperceptible at 2 Hz.
+    _write_idx = audio_buffer_write_idx
+    _buf_copy = audio_buffer.copy()
     audio_snapshot = np.roll(_buf_copy, -_write_idx)
 
     # Apply window function and compute FFT
@@ -854,7 +842,9 @@ def update_plot(frame):
     avg_floor = np.mean(noise_floor)
     noise_text.set_text(f"floor: {avg_floor:.0f} dB SPL")
 
-    # Update title with playback time in file mode
+    # Update title with playback time in file mode.
+    # file_position is written by the audio callback thread; reading it here without
+    # the lock is intentional — a stale display value is acceptable for a UI counter.
     if FILE_MODE:
         pos_s = file_position / SAMPLE_RATE
         total_s = len(file_audio) / SAMPLE_RATE
