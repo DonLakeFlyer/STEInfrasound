@@ -7,6 +7,9 @@ import subprocess
 import sys
 import traceback
 import signal
+from math import gcd
+from scipy import signal as sp_signal
+import threading
 import matplotlib
 matplotlib.rcParams['toolbar'] = 'none'
 # Set backend explicitly for headless/service operation
@@ -19,24 +22,33 @@ if os.environ.get('DISPLAY'):
         except:
             pass
 import matplotlib.pyplot as plt
-import matplotlib.patheffects
 from matplotlib.animation import FuncAnimation
-from hps import HPSDetector
 
 # Add logging to help debug
 def log(msg):
     timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
     print(f"[{timestamp}] {msg}", flush=True)
 
+# Initialise these early so signal_handler can reference them safely before they are
+# assigned in the main body of the module.
+file_stream = None
+stream = None
+
 # Signal handler for clean shutdown
 def signal_handler(sig, frame):
     log(f"Received signal {sig}, shutting down...")
-    global stream
+    global stream, file_stream
+    if file_stream is not None:
+        try:
+            file_stream.stop()
+            file_stream.close()
+        except Exception:
+            pass
     if stream is not None:
         try:
             stream.stop()
             stream.close()
-        except:
+        except Exception:
             pass
     plt.close('all')
     sys.exit(0)
@@ -49,6 +61,19 @@ signal.signal(signal.SIGINT, signal_handler)
 # TEST MODE
 # -----------------------------
 TEST_MODE = '--test' in sys.argv
+
+# -----------------------------
+# FILE REPLAY MODE
+# -----------------------------
+FILE_MODE = False
+FILE_PATH = None
+_file_idx = sys.argv.index('--file') if '--file' in sys.argv else -1
+if _file_idx != -1:
+    if _file_idx + 1 >= len(sys.argv):
+        print("Usage error: --file requires a following path argument.", file=sys.stderr)
+        sys.exit(2)
+    FILE_MODE = True
+    FILE_PATH = sys.argv[_file_idx + 1]
 
 # -----------------------------
 # PLATFORM DETECTION
@@ -91,7 +116,7 @@ FFT_SIZE = int(SAMPLE_RATE / FREQ_RESOLUTION)
 BUFFER_SIZE = FFT_SIZE  # Keep full FFT size for resolution
 
 # Infrasound + low-frequency range (includes elephant rumble harmonics up to 50 Hz)
-LOW_HZ = 10
+LOW_HZ = 0
 HIGH_HZ = 50
 
 # Display settings - relative to noise floor
@@ -117,12 +142,22 @@ SCREEN_HEIGHT = 3.2  # inches (320 pixels / 100 dpi)
 
 # Rolling buffer - always keep the last FFT_SIZE samples
 audio_buffer = np.zeros(BUFFER_SIZE, dtype='float32')
+audio_buffer_write_idx = 0  # ring-buffer write position; plot thread reconstructs via np.roll
+
+# File replay state
+file_audio = None         # float32 mono array resampled to SAMPLE_RATE (for analysis)
+file_audio_output = None  # float32 (N, n_channels) array for speaker output
+file_output_channels = 0  # number of playback channels
+file_position = 0         # current read position (shared by analysis and playback)
+audio_buffer_lock = threading.Lock()  # guards audio_buffer between callback and plot threads
+_file_cb_status = None    # last status string from file_stream_callback (logged on UI thread)
+_mic_cb_status = None     # last status string from audio_callback (logged on UI thread)
+_file_cb_chunk_mono = None # preallocated mono chunk buffer (sliced to actual frames each callback)
 
 # Peak hold buffer - will be initialized after infra_freqs is defined
 peak_values = None
 
-# Audio stream - will be set if successful
-stream = None
+# Audio stream - set in show_splash_screen() if connection succeeds
 audio_error = None
 audio_connected = False
 
@@ -130,18 +165,37 @@ audio_connected = False
 test_time_s = 8.0  # time accumulator (seconds) - start in OFF cycle so prefill is noise-only
 
 # -----------------------------
+# RING BUFFER HELPER
+# -----------------------------
+def _ring_write(data):
+    """Write data into audio_buffer ring buffer. Caller must hold audio_buffer_lock if needed."""
+    global audio_buffer_write_idx
+    n = len(data)
+    end = (audio_buffer_write_idx + n) % BUFFER_SIZE
+    if end > audio_buffer_write_idx:
+        audio_buffer[audio_buffer_write_idx:end] = data
+    else:
+        split = BUFFER_SIZE - audio_buffer_write_idx
+        audio_buffer[audio_buffer_write_idx:] = data[:split]
+        audio_buffer[:end] = data[split:]
+    audio_buffer_write_idx = end
+
+# -----------------------------
 # AUDIO CALLBACK
 # -----------------------------
 def audio_callback(indata, frames, time_info, status):
-    global audio_buffer
+    global _mic_cb_status
 
     if status:
-        print(f"Audio status: {status}")
+        _mic_cb_status = str(status)  # defer to UI thread; no I/O in real-time callback
 
-    # Roll the buffer and append new data
-    data = indata[:, 0]
-    audio_buffer = np.roll(audio_buffer, -len(data))
-    audio_buffer[-len(data):] = data
+    # Never block the real-time callback on the UI thread; drop this chunk if
+    # the lock is held (e.g. during the buffer snapshot in update_plot).
+    if audio_buffer_lock.acquire(blocking=False):
+        try:
+            _ring_write(indata[:, 0])
+        finally:
+            audio_buffer_lock.release()
 
 def generate_test_signal():
     """Generate synthetic elephant rumble + noise for test mode.
@@ -152,7 +206,7 @@ def generate_test_signal():
     attenuated, 2nd harmonic strongest, 3rd intermediate).
     Background = low-level white Gaussian noise.
     """
-    global audio_buffer, test_time_s
+    global test_time_s
 
     block_size = int(SAMPLE_RATE / UPDATE_RATE)
     t = np.arange(block_size) / SAMPLE_RATE + test_time_s
@@ -177,9 +231,106 @@ def generate_test_signal():
     else:
         signal_data = noise
 
-    # Roll buffer and append
-    audio_buffer = np.roll(audio_buffer, -block_size)
-    audio_buffer[-block_size:] = signal_data
+    # Write block into ring buffer (no allocation; called from main thread in TEST_MODE)
+    _ring_write(signal_data)
+
+
+def load_wav_for_replay(path):
+    """Load a WAV file. Returns (mono_arr, output_arr_2d, n_channels)."""
+    from scipy.io import wavfile as sp_wavfile
+
+    # mmap=True avoids loading the full file into RAM; fall back if not supported.
+    try:
+        framerate, data = sp_wavfile.read(path, mmap=True)
+    except (TypeError, ValueError):
+        framerate, data = sp_wavfile.read(path)
+
+    # Normalise to float32 in [-1, 1].
+    # Use np.float32 divisors so all arithmetic stays in float32 (Python float
+    # would silently upcast the result to float64, doubling memory use).
+    if data.dtype == np.float32:
+        arr = data
+    elif data.dtype == np.float64:
+        arr = data.astype(np.float32)
+    elif data.dtype == np.int16:
+        arr = data.astype(np.float32) / np.float32(np.iinfo(np.int16).max + 1)
+    elif data.dtype == np.int32:
+        # scipy reads both 24-bit and 32-bit PCM as int32; check actual bit depth
+        import wave as _wave
+        try:
+            with _wave.open(path, 'r') as _wf:
+                _bits = _wf.getsampwidth() * 8
+        except Exception:
+            _bits = 32
+        arr = data.astype(np.float32) / np.float32(1 << (_bits - 1))
+    elif data.dtype == np.uint8:
+        u8_scale = np.float32(np.iinfo(np.uint8).max + 1)
+        arr = (data.astype(np.float32) - (u8_scale / np.float32(2.0))) / (u8_scale / np.float32(2.0))
+    else:
+        raise ValueError(f"Unsupported WAV dtype: {data.dtype}")
+
+    # Ensure 2D output array (n_frames, n_channels)
+    if arr.ndim == 1:
+        output_arr = arr[:, np.newaxis]
+    else:
+        output_arr = arr
+    n_channels = output_arr.shape[1]
+
+    # Resample to detector SAMPLE_RATE if needed
+    if framerate != SAMPLE_RATE:
+        g = gcd(SAMPLE_RATE, framerate)
+        up = SAMPLE_RATE // g
+        down = framerate // g
+        output_arr = sp_signal.resample_poly(output_arr, up, down, axis=0).astype(np.float32)
+
+    # Mono mix derived from (resampled) output array
+    mono_arr = output_arr.mean(axis=1).astype(np.float32)
+
+    duration = len(mono_arr) / SAMPLE_RATE
+    if len(mono_arr) == 0:
+        raise ValueError("WAV file contains no audio frames")
+    log(f"FILE MODE: loaded '{path}' — {data.dtype}, {n_channels}ch, "
+        f"{framerate} Hz → {SAMPLE_RATE} Hz, {duration:.1f}s")
+    return mono_arr, output_arr, n_channels
+
+
+def file_stream_callback(outdata, frames, time_info, status):
+    """sounddevice output callback: writes file audio to speakers and analysis buffer in sync."""
+    global audio_buffer_write_idx, file_position, _file_cb_status
+
+    if status:
+        _file_cb_status = str(status)  # defer to UI thread; no I/O in real-time callback
+
+    # Real-time callback must not allocate; treat unexpected frame counts as a stream error.
+    if frames > len(_file_cb_chunk_mono):
+        outdata.fill(0)
+        _file_cb_status = (
+            f"Unexpected callback frame count {frames} exceeds "
+            f"preallocated buffer {len(_file_cb_chunk_mono)}"
+        )
+        raise sd.CallbackAbort
+
+    total = len(file_audio)
+    filled = 0
+    mono_out = _file_cb_chunk_mono[:frames]
+    while filled < frames:
+        remaining = total - file_position
+        needed = frames - filled
+        take = min(needed, remaining)
+        outdata[filled:filled + take] = file_audio_output[file_position:file_position + take]
+        mono_out[filled:filled + take] = file_audio[file_position:file_position + take]
+        filled += take
+        file_position += take
+        if file_position >= total:
+            file_position = 0  # loop
+
+    # Never block the real-time callback on the UI thread; drop this chunk if
+    # the lock is held (e.g. during the buffer snapshot in update_plot).
+    if audio_buffer_lock.acquire(blocking=False):
+        try:
+            _ring_write(mono_out)
+        finally:
+            audio_buffer_lock.release()
 
 # -----------------------------
 # SPLASH SCREEN
@@ -432,7 +583,34 @@ def show_error_screen(error_message):
         traceback.print_exc()
 
 # Show splash screen and attempt audio connection
-if TEST_MODE:
+if FILE_MODE:
+    log(f"FILE MODE: replaying '{FILE_PATH}'")
+    try:
+        file_audio, file_audio_output, file_output_channels = load_wav_for_replay(FILE_PATH)
+    except Exception as exc:
+        log(f"ERROR loading file: {exc}")
+        traceback.print_exc()
+        sys.exit(1)
+    # Preallocate callback buffers sized to match blocksize (chunk_mono is sliced to actual frames)
+    _file_cb_blocksize = 2048
+    _file_cb_chunk_mono = np.empty(_file_cb_blocksize, dtype=np.float32)
+    # Start audio output stream — callback keeps playback in sync with display buffer
+    try:
+        file_stream = sd.OutputStream(
+            samplerate=SAMPLE_RATE,
+            channels=file_output_channels,
+            dtype='float32',
+            callback=file_stream_callback,
+            blocksize=_file_cb_blocksize,
+        )
+        file_stream.start()
+    except Exception as exc:
+        log(f"ERROR opening audio output device: {exc}")
+        traceback.print_exc()
+        sys.exit(1)
+    log(f"FILE MODE: audio output started ({file_output_channels}ch)")
+    audio_connected = True
+elif TEST_MODE:
     log("TEST MODE: using synthetic elephant rumble signal")
     audio_connected = True
     # Pre-fill buffer with a few blocks of noise so noise floor initializes
@@ -467,14 +645,9 @@ NOISE_FLOOR_WARMUP_FRAMES = 10  # Use fast adaptation for first N frames (~5 sec
 window = np.hanning(FFT_SIZE)
 window_sum = np.sum(window)
 
-# HPS detector - needs full spectrum freqs, not just display band
-hps_detector = HPSDetector(freqs, fund_low=10.0, fund_high=25.0, num_harmonics=3, threshold_db=18.0)
-active_markers = []  # list of (fundamental_hz, birth_time, annotation)
-MARKER_DURATION = 3.0  # seconds before marker fades out
-
 # Initialize bars
 bars = ax.bar(infra_freqs, np.zeros(len(infra_freqs)), width=FREQ_RESOLUTION * 0.8, color='cyan')
-ax.set_xlim(LOW_HZ, HIGH_HZ)
+ax.set_xlim(-FREQ_RESOLUTION / 2, HIGH_HZ)  # shift left so 0 Hz bar is fully visible
 ax.set_ylim(DB_MIN, DB_MAX)
 ax.set_xlabel("Frequency (Hz)", fontsize=7)
 ax.set_ylabel("dB above background", fontsize=7)
@@ -604,14 +777,28 @@ fig.canvas.mpl_connect('button_press_event', on_click)
 # UPDATE FUNCTION
 # -----------------------------
 def update_plot(frame):
-    global audio_buffer, peak_values, noise_floor, noise_floor_warmup, active_markers
+    global audio_buffer, peak_values, noise_floor, noise_floor_warmup, _file_cb_status, _mic_cb_status
+
+    # Log any deferred status messages from audio callbacks
+    if _file_cb_status is not None:
+        log(f"File stream status: {_file_cb_status}")
+        _file_cb_status = None
+    if _mic_cb_status is not None:
+        log(f"Audio status: {_mic_cb_status}")
+        _mic_cb_status = None
 
     # In test mode, generate synthetic data each frame
-    if TEST_MODE:
+    if TEST_MODE and not FILE_MODE:
         generate_test_signal()
+    # FILE_MODE: buffer is filled by file_stream_callback in sync with audio output
 
-    # Get a snapshot of the buffer
-    audio_snapshot = audio_buffer.copy()
+    # Get a contiguous snapshot of the ring buffer.
+    # Copy shared state under the lock, then do the expensive reordering outside it
+    # to minimise lock hold time and avoid blocking the real-time audio callback.
+    with audio_buffer_lock:
+        _buf_copy = audio_buffer.copy()
+        _write_idx = audio_buffer_write_idx
+    audio_snapshot = np.roll(_buf_copy, -_write_idx)
 
     # Apply window function and compute FFT
     windowed = audio_snapshot * window
@@ -638,30 +825,6 @@ def update_plot(frame):
         # Fast adaptation downward (floor drops when quiet)
         alpha = np.where(infra_db > noise_floor, NOISE_FLOOR_ALPHA_UP, NOISE_FLOOR_ALPHA_DOWN)
         noise_floor = alpha * infra_db + (1 - alpha) * noise_floor
-
-    # HPS detection - feed full magnitude spectrum
-    now = time.time()
-    event = hps_detector.update(magnitude, now)
-    if event is not None:
-        log(f"HPS detection: {event.fundamental_hz:.1f} Hz, {event.hps_peak_db:.1f} dB")
-        # Add marker annotation
-        ann = ax.annotate('\u25BC', xy=(event.fundamental_hz, DB_MAX),
-                          ha='center', va='top', fontsize=10, color='white',
-                          fontweight='bold',
-                          path_effects=[matplotlib.patheffects.withStroke(linewidth=2, foreground='black')])
-        active_markers.append((event.fundamental_hz, now, ann))
-
-    # Age out old markers, update alpha for fading
-    surviving = []
-    for freq, birth, ann in active_markers:
-        age = now - birth
-        if age >= MARKER_DURATION:
-            ann.remove()
-            continue
-        alpha_fade = max(0.0, 1.0 - (age / MARKER_DURATION))
-        ann.set_alpha(alpha_fade)
-        surviving.append((freq, birth, ann))
-    active_markers = surviving
 
     # Compute dB above noise floor
     relative_db = infra_db - noise_floor
@@ -691,6 +854,18 @@ def update_plot(frame):
     avg_floor = np.mean(noise_floor)
     noise_text.set_text(f"floor: {avg_floor:.0f} dB SPL")
 
+    # Update title with playback time in file mode
+    if FILE_MODE:
+        pos_s = file_position / SAMPLE_RATE
+        total_s = len(file_audio) / SAMPLE_RATE
+        elapsed = int(pos_s)
+        total = int(total_s)
+        ax.set_title(
+            f"Infrasound {LOW_HZ}-{HIGH_HZ} Hz  |  "
+            f"{elapsed//60:02d}:{elapsed%60:02d} / {total//60:02d}:{total%60:02d}",
+            fontsize=8
+        )
+
     return list(bars) + [noise_text]
 
 # -----------------------------
@@ -708,6 +883,9 @@ plt.tight_layout()
 plt.show()
 
 # Clean up
+if file_stream is not None:
+    file_stream.stop()
+    file_stream.close()
 if stream is not None:
     stream.stop()
     stream.close()
