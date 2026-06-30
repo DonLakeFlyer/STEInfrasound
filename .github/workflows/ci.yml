@@ -28,4 +28,4 @@ jobs:
           pip install -r requirements.txt
 
       - name: Syntax check
-        run: python3 -m py_compile ste_infrasound.py infrasound.py hps.py realtime_fft.py realtime_fft_lowpass.py realtime_infrasound.py
+        run: python3 -m py_compile ste_infrasound.py infrasound.py hps.py

@@ -161,6 +161,16 @@ python infrasound.py
 python infrasound.py --test
 ```
 
+**File replay mode** (analyze a recorded WAV file instead of live input):
+
+```bash
+python infrasound.py --file path/to/recording.wav
+```
+
+**Options:**
+- `--test` — Run with a synthetic 18 Hz rumble signal; no microphone required
+- `--file PATH` — Replay and analyze a recorded WAV file instead of live audio input
+
 **Features:**
 - Displays real-time FFT of 10-50 Hz band (infrasound + elephant rumble harmonics)
 - Adaptive noise floor with dB-above-background display
@@ -193,43 +203,6 @@ python ste_infrasound.py audio/example.wav --translate-infra --translate-carrier
 - `--translate-infra` — Translate infrasound to audible range using SSB
 - `--translate-carrier FREQ` — Carrier frequency for translation (default: 200 Hz)
 - `--translate-gain GAIN` — Gain multiplier after translation (default: 1.0)
-
-### General-Purpose Live FFT (`realtime_fft.py`)
-
-Flexible real-time spectrum analyzer with USB audio input support.
-
-```bash
-# List available audio devices
-python realtime_fft.py --list-devices
-
-# Audible spectrum from USB device
-python realtime_fft.py --device usb --sample-rate 48000 --fft-size 4096
-
-# Infrasound spectrum in fullscreen
-python realtime_fft.py --spectrum-type infrasound --fullscreen
-```
-
-**Options:**
-- `--device NAME` — Device name substring (e.g., 'usb')
-- `--sample-rate RATE` — Sample rate in Hz (default: 48000)
-- `--fft-size SIZE` — FFT size (default: 2048)
-- `--spectrum-type TYPE` — 'audible' or 'infrasound' (default: audible)
-- `--fullscreen` — Display in fullscreen mode
-- `--y-min DB` — Lower Y limit in dBFS (default: -120)
-- `--y-max DB` — Upper Y limit in dBFS (default: 10)
-
-### Elephant Rumble Monitor (`realtime_infrasound.py`)
-
-Specialized real-time display for elephant infrasound rumbles (5-25 Hz).
-
-```bash
-python realtime_infrasound.py
-```
-
-**Features:**
-- Fixed 5-25 Hz display range
-- Auto-selects best available sample rate (8-48 kHz)
-- 16000-point FFT for high frequency resolution
 
 ## Troubleshooting
 
