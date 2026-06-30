@@ -28,4 +28,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Syntax check
-        run: python3 -m py_compile ste_infrasound.py infrasound.py hps.py
+        run: python3 -m py_compile ste_infrasound.py infrasound.py infrasound_core.py infrasound_ui.py infrasound_bar.py infrasound_detect.py infrasound_detections.py
+
+      - name: Run tests
+        run: python3 -m pytest -q
