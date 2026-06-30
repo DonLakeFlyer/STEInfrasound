@@ -1,0 +1,6 @@
+[tool.pytest.ini_options]
+# Make the repo-root modules (infrasound_core, infrasound_bar, infrasound_detect)
+# importable from the tests/ package.
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"

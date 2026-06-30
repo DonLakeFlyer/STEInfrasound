@@ -147,6 +147,11 @@ pip install -r requirements.txt
 
 ## Applications
 
+The live display apps share a common backend: audio capture, FFT, and the
+adaptive noise floor live in `infrasound_core.py`, and the splash/error/menu
+screens live in `infrasound_ui.py`. Each display app (`infrasound.py`,
+`infrasound_detections.py`) is a thin front-end built on top of these.
+
 ### Real-Time Infrasound Display (`infrasound.py`)
 
 Live infrasound spectrum analyzer designed for Raspberry Pi with 3.5" display. This is the main application that runs on the Raspberry Pi at startup.
@@ -165,11 +170,14 @@ python infrasound.py --test
 
 ```bash
 python infrasound.py --file path/to/recording.wav
+# Or pass the path directly (bare path => file mode; no path => live mic):
+python infrasound.py path/to/recording.wav
 ```
 
 **Options:**
 - `--test` — Run with a synthetic 18 Hz rumble signal; no microphone required
 - `--file PATH` — Replay and analyze a recorded WAV file instead of live audio input
+- A bare path argument is also accepted and treated as `--file PATH`
 
 **Features:**
 - Displays real-time FFT of 10-50 Hz band (infrasound + elephant rumble harmonics)
@@ -179,6 +187,65 @@ python infrasound.py --file path/to/recording.wav
 - Optimized for 320x480 touchscreen displays
 - Auto-detects Raspberry Pi platform
 - Peak decay visualization
+
+### Detection Display (`infrasound_detections.py`)
+
+Event-triggered frequency-vs-time view. Instead of scrolling continuously, it
+draws one chart per detection: a chart starts when a clump of power at least 16
+dB above the adaptive noise floor, more than ~2.5 Hz wide, persists for ~1.5 s.
+The chart's X axis then grows for as long as the detection continues and freezes
+the moment the clump drops out. The next qualifying clump clears the chart and
+starts a fresh one. By default the raw bar spectrum (the same view as
+`infrasound.py`) is shown above the detection heatmap so you can watch raw data
+and detections at the same time.
+
+False-positive filtering (on by default) rejects obvious wind/broadband noise:
+frames where energy is smeared across a large fraction of the band, or where the
+strongest clump is implausibly wide for a rumble harmonic, do not start a
+detection. A broadband frame in the *middle* of an ongoing detection is treated
+as a brief gap and does not end it (so a wind gust over a real rumble won't clip
+the event).
+
+```bash
+# Live microphone (raw bars + detection heatmap)
+python infrasound_detections.py
+
+# Synthetic rumble (no microphone needed)
+python infrasound_detections.py --test
+
+# Replay and analyze a recorded WAV file
+python infrasound_detections.py --file path/to/recording.wav
+# Or pass the path directly (bare path => file mode; no path => live mic):
+python infrasound_detections.py path/to/recording.wav
+
+# Raise the detection threshold to 20 dB above the noise floor
+python infrasound_detections.py --threshold 20
+
+# Review a long recording faster than real time (silent 8x fast-scan)
+python infrasound_detections.py --file path/to/recording.wav --speed 8
+
+# Disable broadband/wind false-positive filtering
+python infrasound_detections.py --no-fp-filter
+
+# Hide the raw bar spectrum (detection heatmap only)
+python infrasound_detections.py --no-bars
+```
+
+**Options:**
+- `--test` — Run with a synthetic 18 Hz rumble signal; no microphone required
+- `--file PATH` — Replay and analyze a recorded WAV file instead of live audio input
+- `--threshold DB` — dB above noise floor required to trigger a detection (default: 16)
+- `--speed N` — File mode only: scan faster than real time (whole number, N ≥ 1). Above 1× audio playback is skipped (silent fast-scan); every analysis window is still processed the same way as normal playback
+- `--no-fp-filter` — Disable the wind/broadband false-positive filter (on by default)
+- `--no-bars` — Hide the raw bar spectrum and show only the detection heatmap
+- A bare path argument is also accepted and treated as `--file PATH`
+
+**Axes / display:**
+- Top chart (unless `--no-bars`) = the live bar spectrum from `infrasound.py`
+- X axis = elapsed time within the current detection event (not real-time scrolling)
+- Y axis = frequency (Hz), auto-zoomed to the band that contains data
+- Greyscale intensity = dB above noise floor (threshold = light, louder = darker)
+- A single event's chart is capped at 20 s wide
 
 ### WAV File Playback with Processing (`ste_infrasound.py`)
 
